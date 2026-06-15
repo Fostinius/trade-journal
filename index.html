@@ -109,8 +109,12 @@
           React.createElement("span", { style: { fontSize: 12, color: "#64748b" } }, formatDate(e.date)),
           React.createElement(Badge, { label: e.bias }),
           e.timeframe && React.createElement("span", { style: { fontSize: 11, color: "#64748b" } }, e.timeframe),
-          e.price && React.createElement("span", { style: { fontSize: 12, color: "#94a3b8", marginLeft: "auto" } }, `$${parseFloat(e.price).toFixed(2)}`),
-          React.createElement("span", { style: { color: "#475569", fontSize: 11, marginLeft: e.price ? 6 : "auto" } }, expanded ? "▲" : "▼")
+          React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, marginLeft: "auto" } },
+            e.price && React.createElement("span", { style: { fontSize: 12, color: "#94a3b8" } }, `$${parseFloat(e.price).toFixed(2)}`),
+            e.price && e.target && React.createElement("span", { style: { fontSize: 11, color: "#475569" } }, "→"),
+            e.target && React.createElement("span", { style: { fontSize: 12, color: "#22c55e", fontWeight: 600 } }, `🎯 $${parseFloat(e.target).toFixed(2)}`),
+          ),
+          React.createElement("span", { style: { color: "#475569", fontSize: 11, marginLeft: 8 } }, expanded ? "▲" : "▼")
         ),
         expanded && React.createElement("div", { style: { padding: "0 16px 16px", borderTop: "1px solid #1e293b" } },
           e.setups?.length > 0 && React.createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap", marginTop: 12 } },

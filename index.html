@@ -49,6 +49,32 @@ async function fetchPrice(ticker) {
   return null;
 }
 
+const metricsCache = {};
+async function fetchMetrics(ticker) {
+  if (metricsCache[ticker] && Date.now() - metricsCache[ticker].ts < 3600000) return metricsCache[ticker].data;
+  try {
+    const [profileRes, metricRes] = await Promise.all([
+      fetch(`https://finnhub.io/api/v1/stock/profile2?symbol=${ticker}&token=${FINNHUB_KEY}`),
+      fetch(`https://finnhub.io/api/v1/stock/metric?symbol=${ticker}&metric=all&token=${FINNHUB_KEY}`)
+    ]);
+    const profile = await profileRes.json();
+    const metric = await metricRes.json();
+    const data = {
+      marketCap: profile.marketCapitalization ?? null,
+      high52: metric.metric?.["52WeekHigh"] ?? null,
+      low52: metric.metric?.["52WeekLow"] ?? null,
+    };
+    metricsCache[ticker] = { data, ts: Date.now() };
+    return data;
+  } catch (_) { return null; }
+}
+
+function fmtCap(mc) {
+  if (!mc) return "—";
+  if (mc >= 1000) return `$${(mc / 1000).toFixed(2)}T`;
+  return `$${mc.toFixed(2)}B`;
+}
+
 // ─── Constants ────────────────────────────────────────────────────────────────
 const BIASES = ["Bullish", "Bearish", "Neutral"];
 const SETUPS = ["Breakout", "Breakdown", "H&S", "Reverse H&S", "Support Test",
@@ -125,10 +151,14 @@ function EntryCard({ entry, onDelete, onEdit, onAddUpdate }) {
   const [expanded, setExpanded] = useState(false);
   const [showUpdateForm, setShowUpdateForm] = useState(false);
   const [livePrice, setLivePrice] = useState(null);
+  const [metrics, setMetrics] = useState(null);
   const e = entry;
 
   useEffect(() => {
-    if (expanded && e.ticker) fetchPrice(e.ticker).then(p => p && setLivePrice(p));
+    if (expanded && e.ticker) {
+      fetchPrice(e.ticker).then(p => p && setLivePrice(p));
+      fetchMetrics(e.ticker).then(m => m && setMetrics(m));
+    }
   }, [expanded, e.ticker]);
 
   const entryPrice = parseFloat(e.price);
@@ -181,6 +211,20 @@ function EntryCard({ entry, onDelete, onEdit, onAddUpdate }) {
           React.createElement("div", { style: { fontSize: 18, fontWeight: 700, color: "#f59e0b", fontFamily: "monospace" } },
             `${parseFloat(pct(entryPrice, targetPrice)) >= 0 ? "+" : ""}${pct(entryPrice, targetPrice)}%`
           )
+        ),
+
+        // Market cap + 52w
+        React.createElement("div", null,
+          React.createElement("div", { style: { fontSize: 10, color: "#64748b", textTransform: "uppercase", letterSpacing: 0.5 } }, "Market Cap"),
+          React.createElement("div", { style: { fontSize: 16, fontWeight: 700, color: "#f8fafc", fontFamily: "monospace" } }, metrics ? fmtCap(metrics.marketCap) : "laden...")
+        ),
+        React.createElement("div", null,
+          React.createElement("div", { style: { fontSize: 10, color: "#64748b", textTransform: "uppercase", letterSpacing: 0.5 } }, "52W High"),
+          React.createElement("div", { style: { fontSize: 16, fontWeight: 700, color: "#22c55e", fontFamily: "monospace" } }, metrics?.high52 ? `$${metrics.high52.toFixed(2)}` : "—")
+        ),
+        React.createElement("div", null,
+          React.createElement("div", { style: { fontSize: 10, color: "#64748b", textTransform: "uppercase", letterSpacing: 0.5 } }, "52W Low"),
+          React.createElement("div", { style: { fontSize: 16, fontWeight: 700, color: "#ef4444", fontFamily: "monospace" } }, metrics?.low52 ? `$${metrics.low52.toFixed(2)}` : "—")
         )
       ),
 

@@ -225,6 +225,11 @@ function EntryCard({ entry, onDelete, onEdit, onAddUpdate }) {
         React.createElement("div", null,
           React.createElement("div", { style: { fontSize: 10, color: "#64748b", textTransform: "uppercase", letterSpacing: 0.5 } }, "52W Low"),
           React.createElement("div", { style: { fontSize: 16, fontWeight: 700, color: "#ef4444", fontFamily: "monospace" } }, metrics?.low52 ? `$${metrics.low52.toFixed(2)}` : "—")
+        ),
+        e.invalidation && React.createElement("div", null,
+          React.createElement("div", { style: { fontSize: 10, color: "#64748b", textTransform: "uppercase", letterSpacing: 0.5 } }, "Invalidation"),
+          React.createElement("div", { style: { fontSize: 16, fontWeight: 700, color: "#f97316", fontFamily: "monospace" } }, `$${parseFloat(e.invalidation).toFixed(2)}`),
+          React.createElement("div", { style: { fontSize: 10, color: "#f97316" } }, `Ongeldig ${e.invalidationDir || "onder"} dit niveau`)
         )
       ),
 
@@ -265,7 +270,7 @@ function EntryCard({ entry, onDelete, onEdit, onAddUpdate }) {
 
 // ─── Entry Form ───────────────────────────────────────────────────────────────
 function EntryForm({ initial, onSave, onCancel, saving }) {
-  const blank = { ticker: "", date: new Date().toISOString().slice(0, 10), price: "", target: "", bias: "Bullish", timeframe: "1D", setups: [], note: "", imageData: "" };
+  const blank = { ticker: "", date: new Date().toISOString().slice(0, 10), price: "", target: "", bias: "Bullish", timeframe: "1D", setups: [], note: "", imageData: "", invalidation: "", invalidationDir: "onder" };
   const [form, setForm] = useState(initial ? { ...initial } : blank);
   const [preview, setPreview] = useState(initial?.imageData ?? "");
   const [imgError, setImgError] = useState("");
@@ -299,6 +304,11 @@ function EntryForm({ initial, onSave, onCancel, saving }) {
       React.createElement(Field, { label: "Datum" }, React.createElement("input", { type: "date", value: form.date, onChange: e => set("date", e.target.value), style: IS(140) })),
       React.createElement(Field, { label: "Instapprijs" }, React.createElement("input", { type: "number", value: form.price, onChange: e => set("price", e.target.value), placeholder: "115.00", style: IS(100) })),
       React.createElement(Field, { label: "Target" }, React.createElement("input", { type: "number", value: form.target, onChange: e => set("target", e.target.value), placeholder: "203.00", style: IS(100) })),
+      React.createElement(Field, { label: "Invalidation" }, React.createElement("input", { type: "number", value: form.invalidation, onChange: e => set("invalidation", e.target.value), placeholder: "108.00", style: IS(100) })),
+      React.createElement(Field, { label: "Ongeldig" }, React.createElement("select", { value: form.invalidationDir, onChange: e => set("invalidationDir", e.target.value), style: IS(90) },
+        React.createElement("option", { value: "onder" }, "Onder"),
+        React.createElement("option", { value: "boven" }, "Boven")
+      )),
       React.createElement(Field, { label: "Timeframe" }, React.createElement("select", { value: form.timeframe, onChange: e => set("timeframe", e.target.value), style: IS(90) }, ...TIMEFRAMES.map(t => React.createElement("option", { key: t }, t))))
     ),
 
@@ -380,6 +390,7 @@ function App() {
         price: form.price || "", target: form.target || "",
         bias: form.bias, timeframe: form.timeframe, setups: form.setups,
         note: form.note, imageData: form.imageData || "",
+        invalidation: form.invalidation || "", invalidationDir: form.invalidationDir || "onder",
         updates: form.updates || [],
         updatedAt: new Date().toISOString(),
       };

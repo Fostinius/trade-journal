@@ -71,8 +71,10 @@ async function fetchMetrics(ticker) {
 
 function fmtCap(mc) {
   if (!mc) return "—";
-  if (mc >= 1000) return `$${(mc / 1000).toFixed(2)}T`;
-  return `$${mc.toFixed(2)}B`;
+  // Finnhub returns market cap in millions
+  if (mc >= 1000000) return `$${(mc / 1000000).toFixed(2)}T`;
+  if (mc >= 1000) return `$${(mc / 1000).toFixed(2)}B`;
+  return `$${mc.toFixed(0)}M`;
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────

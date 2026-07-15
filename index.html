@@ -151,8 +151,8 @@ function UpdateForm({ onAdd, onCancel }) {
 // ─── Move to folder menu ────────────────────────────────────────────────────
 function MoveMenu({ entry, allFolders, onMove, onClose }) {
   const [newFolder, setNewFolder] = useState("");
-  const current = entry.folder || "Actief";
-  const options = [...new Set(["Actief", "Archief", ...allFolders])];
+  const current = entry.folder || "Active";
+  const options = [...new Set(["Active", "Archief", ...allFolders])];
 
   return React.createElement("div", { onClick: ev => ev.stopPropagation(), style: { background: "#0a1628", border: "1px solid #334155", borderRadius: 8, padding: 12, marginTop: 8, display: "flex", flexDirection: "column", gap: 8 } },
     React.createElement("div", { style: { fontSize: 11, color: "#64748b", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5 } }, "Verplaats naar map"),
@@ -161,7 +161,7 @@ function MoveMenu({ entry, allFolders, onMove, onClose }) {
         key: f,
         onClick: () => { onMove(entry, f); onClose(); },
         style: { background: current === f ? "#1e3a5f" : "#1e293b", color: current === f ? "#7dd3fc" : "#94a3b8", border: `1px solid ${current === f ? "#7dd3fc44" : "#334155"}`, borderRadius: 6, padding: "4px 10px", fontSize: 11, cursor: "pointer", fontWeight: 600 }
-      }, (f === "Archief" ? "🗄️ " : f === "Actief" ? "📌 " : "📁 ") + f))
+      }, (f === "Archief" ? "🗄️ " : f === "Active" ? "📌 " : "📁 ") + f))
     ),
     React.createElement("div", { style: { display: "flex", gap: 6 } },
       React.createElement("input", { value: newFolder, onChange: ev => setNewFolder(ev.target.value), placeholder: "Nieuwe map...", style: IS(160) }),
@@ -178,7 +178,7 @@ function EntryCard({ entry, onDelete, onEdit, onAddUpdate, onMove, allFolders })
   const [livePrice, setLivePrice] = useState(null);
   const [metrics, setMetrics] = useState(null);
   const e = entry;
-  const folder = e.folder || "Actief";
+  const folder = e.folder || "Active";
 
   useEffect(() => {
     if (expanded && e.ticker) {
@@ -203,7 +203,7 @@ function EntryCard({ entry, onDelete, onEdit, onAddUpdate, onMove, allFolders })
       React.createElement(Badge, { label: e.bias }),
       e.timeframe && React.createElement("span", { style: { fontSize: 11, color: "#64748b" } }, e.timeframe),
       updates.length > 0 && React.createElement("span", { style: { fontSize: 10, color: "#7dd3fc", background: "#1e3a5f", padding: "1px 6px", borderRadius: 10 } }, `${updates.length} updates`),
-      folder !== "Actief" && React.createElement("span", { style: { fontSize: 10, color: "#f59e0b", background: "#3b2a0a", padding: "1px 6px", borderRadius: 10 } }, `${folder === "Archief" ? "🗄️" : "📁"} ${folder}`),
+      folder !== "Active" && React.createElement("span", { style: { fontSize: 10, color: "#f59e0b", background: "#3b2a0a", padding: "1px 6px", borderRadius: 10 } }, `${folder === "Archief" ? "🗄️" : "📁"} ${folder}`),
       React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, marginLeft: "auto" } },
         e.price && React.createElement("span", { style: { fontSize: 12, color: "#94a3b8" } }, `$${entryPrice.toFixed(2)}`),
         e.price && e.target && React.createElement("span", { style: { fontSize: 11, color: "#475569" } }, "→"),
@@ -396,7 +396,7 @@ function App() {
   const [search, setSearch] = useState("");
   const [filterBias, setFilterBias] = useState("All");
   const [filterSetup, setFilterSetup] = useState("All");
-  const [filterFolder, setFilterFolder] = useState("Actief");
+  const [filterFolder, setFilterFolder] = useState("Active");
   const [groupByTicker, setGroupByTicker] = useState(true);
   const [error, setError] = useState("");
 
@@ -461,12 +461,12 @@ function App() {
 
   function handleEdit(entry) { setEditEntry(entry); setShowForm(true); window.scrollTo({ top: 0, behavior: "smooth" }); }
 
-  const allFolders = [...new Set(entries.map(e => e.folder || "Actief"))];
-  const folderOptions = [...new Set(["Actief", "Archief", ...allFolders])];
+  const allFolders = [...new Set(entries.map(e => e.folder || "Active"))];
+  const folderOptions = [...new Set(["Active", "Archief", ...allFolders])];
 
   const filtered = entries.filter(e => {
     const s = search.trim().toLowerCase();
-    const eFolder = e.folder || "Actief";
+    const eFolder = e.folder || "Active";
     return (!s || e.ticker.toLowerCase().includes(s) || (e.note ?? "").toLowerCase().includes(s))
       && (filterBias === "All" || e.bias === filterBias)
       && (filterSetup === "All" || (e.setups ?? []).includes(filterSetup))
@@ -505,7 +505,7 @@ function App() {
           ...SETUPS.map(s => React.createElement("option", { key: s }, s))
         ),
         React.createElement("select", { value: filterFolder, onChange: e => setFilterFolder(e.target.value), style: IS(150) },
-          ...folderOptions.map(f => React.createElement("option", { key: f, value: f }, (f === "Archief" ? "🗄️ " : f === "Actief" ? "📌 " : "📁 ") + f)),
+          ...folderOptions.map(f => React.createElement("option", { key: f, value: f }, (f === "Archief" ? "🗄️ " : f === "Active" ? "📌 " : "📁 ") + f)),
           React.createElement("option", { value: "Alle" }, "Alle mappen")
         ),
         React.createElement("button", { onClick: () => setGroupByTicker(v => !v), style: BS(groupByTicker ? "#1e3a5f" : "#1e293b", groupByTicker ? "#7dd3fc" : "#64748b") },

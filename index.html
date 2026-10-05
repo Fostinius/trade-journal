@@ -112,6 +112,21 @@
     .tablink:hover { color: var(--accent); border-color: var(--accent); }
     .crumb { color: var(--dim); text-decoration: none; font-size: 12px; margin-left: 12px; }
     .crumb:hover { color: var(--accent); }
+    .ov-sum { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; font-size: 12px; color: var(--dim); margin-bottom: 10px; }
+    .ov-sum b { color: #f8fafc; }
+    .ov-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
+    .ov { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 860px; }
+    .ov th { text-align: left; font-size: 11px; color: var(--muted); font-weight: 600; padding: 9px 10px; border-bottom: 1px solid var(--line2); white-space: nowrap; background: var(--panel2); position: sticky; top: 0; }
+    .ov th.sort { cursor: pointer; }
+    .ov th.sort:hover, .ov th.on { color: var(--accent); }
+    .ov td { padding: 9px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+    .ov tr:last-child td { border-bottom: 0; }
+    .ov tbody tr { cursor: pointer; }
+    .ov tbody tr:hover td { background: #111c33; }
+    .ov .num { font-family: monospace; white-space: nowrap; }
+    .ov .sub { display: block; font-size: 11px; color: var(--muted); font-family: monospace; }
+    .ov .last { color: #cbd5e1; font-size: 12px; line-height: 1.45; max-width: 300px; }
+    .st { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 10px; white-space: nowrap; }
     .lightbox { position: fixed; inset: 0; background: rgba(2, 6, 23, .94); display: flex; align-items: center; justify-content: center; z-index: 300; padding: 16px; cursor: zoom-out; }
     .lightbox img { max-width: 100%; max-height: 100%; border-radius: 6px; }
 
@@ -283,6 +298,33 @@ function TabLink({ ticker }) {
     title=${`${ticker} openen in nieuw tabblad`} onClick=${e => e.stopPropagation()}>↗</a>`;
 }
 
+// Richting van de trade: target onder instap = short
+function isShort(e) {
+  const p = parseFloat(e.price), t = parseFloat(e.target);
+  if (p && t) return t < p;
+  return e.bias === "Bearish";
+}
+function pnlNum(e, live) {
+  const p = parseFloat(e.price);
+  if (!p || !live) return null;
+  const r = (live - p) / p * 100;
+  return isShort(e) ? -r : r;
+}
+function statusOf(e, live) {
+  if (!live) return null;
+  const inv = parseFloat(e.invalidation), t = parseFloat(e.target);
+  if (inv && ((e.invalidationDir || "onder") === "onder" ? live < inv : live > inv)) return "invalid";
+  if (t && (isShort(e) ? live <= t : live >= t)) return "target";
+  if (inv && Math.abs((inv - live) / live * 100) < 3) return "near";
+  return "active";
+}
+const STATUS = {
+  invalid: { label: "⚠ Ongeldig", color: "#fca5a5", bg: "#450a0a" },
+  target: { label: "🎯 Target", color: "#86efac", bg: "#052e16" },
+  near: { label: "Dicht bij invalidation", color: "#fcd34d", bg: "#3b2a0a" },
+  active: { label: "Actief", color: "#94a3b8", bg: "#1e293b" },
+};
+
 // ─── Small components ─────────────────────────────────────────────────────────
 function TfBadge({ tf, big }) {
   const t = tfInfo(tf);
@@ -434,7 +476,8 @@ function EntryCard({ entry: e, defaultOpen, editForm, allFolders, onDelete, onEd
   const qCur = quote?.currency || cur;
 
   const entryPrice = parseFloat(e.price), targetPrice = parseFloat(e.target);
-  const pnl = livePrice && entryPrice ? pct(entryPrice, livePrice) : null;
+  const pnlN = pnlNum(e, livePrice);
+  const pnl = pnlN === null ? null : pnlN.toFixed(2);
   const toTarget = livePrice && targetPrice ? pct(livePrice, targetPrice) : null;
   const pnlColor = pnl === null ? "#94a3b8" : parseFloat(pnl) >= 0 ? "#22c55e" : "#ef4444";
   const loading = quote === undefined ? "laden..." : "—";
@@ -592,6 +635,112 @@ function EntryForm({ initial, defaultTicker, onSave, onCancel, saving }) {
   </div>`;
 }
 
+// ─── Overzicht (tabel met live koersen) ──────────────────────────────────────
+async function mapLimit(items, n, fn) {
+  const out = []; let i = 0;
+  await Promise.all(Array.from({ length: Math.min(n, items.length) }, async () => {
+    while (i < items.length) { const k = i++; out[k] = await fn(items[k]); }
+  }));
+  return out;
+}
+const fmtPct = v => v === null || v === undefined ? "—" : `${v >= 0 ? "+" : ""}${v.toFixed(1)}%`;
+
+function Overview({ entries, onOpen }) {
+  const [quotes, setQuotes] = useState({});
+  const [stamp, setStamp] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [sort, setSort] = useState({ key: "date", dir: -1 });
+  const ids = entries.map(e => e.id + (e.exchange || "")).join(",");
+
+  async function load(force) {
+    setBusy(true);
+    if (force) Object.keys(quoteCache).forEach(k => delete quoteCache[k]);
+    const res = await mapLimit(entries, 6, e => fetchQuote(e));
+    const m = {}; entries.forEach((e, i) => { m[e.id] = res[i]; });
+    setQuotes(m); setStamp(new Date()); setBusy(false);
+  }
+  useEffect(() => { load(false); }, [ids]);
+
+  const rows = entries.map(e => {
+    const q = quotes[e.id];
+    const live = q?.price ?? null;
+    const inv = parseFloat(e.invalidation), t = parseFloat(e.target);
+    return {
+      e, q, loaded: e.id in quotes, live,
+      pnl: pnlNum(e, live),
+      toTarget: live && t ? (t - live) / live * 100 : null,
+      toInv: live && inv ? (inv - live) / live * 100 : null,
+      st: statusOf(e, live), bias: currentBias(e), last: timelineOf(e).find(i => i.note) || timelineOf(e)[0],
+    };
+  });
+  const val = r => sort.key === "ticker" ? r.e.ticker
+    : sort.key === "pnl" ? (r.pnl ?? -1e9)
+    : sort.key === "inv" ? (r.toInv === null ? 1e9 : Math.abs(r.toInv))
+    : lastActivity(r.e);
+  rows.sort((a, b) => { const x = val(a), y = val(b); return (x < y ? -1 : x > y ? 1 : 0) * sort.dir; });
+  const sortBy = (key, dir) => setSort(s => s.key === key ? { key, dir: -s.dir } : { key, dir });
+  const Th = ({ k, d, children }) => html`<th className=${"sort" + (sort.key === k ? " on" : "")} onClick=${() => sortBy(k, d)}>
+    ${children}${sort.key === k ? (sort.dir === 1 ? " ▲" : " ▼") : ""}</th>`;
+
+  const count = s => rows.filter(r => r.st === s).length;
+  const biasCount = b => rows.filter(r => r.bias === b).length;
+
+  return html`<div>
+    <div className="ov-sum">
+      <span><b>${rows.length}</b> entries</span>
+      <span style=${{ color: BIAS_COLOR.Bullish }}>${biasCount("Bullish")} bullish</span>
+      <span style=${{ color: BIAS_COLOR.Bearish }}>${biasCount("Bearish")} bearish</span>
+      <span>${biasCount("Neutral")} neutraal</span>
+      ${count("target") > 0 && html`<span style=${{ color: STATUS.target.color }}>${count("target")} op target</span>`}
+      ${count("near") > 0 && html`<span style=${{ color: STATUS.near.color }}>${count("near")} dicht bij invalidation</span>`}
+      ${count("invalid") > 0 && html`<span style=${{ color: STATUS.invalid.color }}>${count("invalid")} ongeldig</span>`}
+      <span style=${{ marginLeft: "auto" }}>${busy ? "Koersen laden..." : stamp ? `Koersen van ${stamp.toLocaleTimeString("nl-BE", { hour: "2-digit", minute: "2-digit" })}` : ""}</span>
+      <button className="btn small" disabled=${busy} onClick=${() => load(true)}>↻ Vernieuw</button>
+    </div>
+    <div className="ov-wrap">
+      <table className="ov">
+        <thead><tr>
+          <${Th} k="ticker" d=${1}>Ticker<//>
+          <th>Bias</th>
+          <th>Koers</th>
+          <${Th} k="pnl" d=${-1}>P&L<//>
+          <th>Target</th>
+          <${Th} k="inv" d=${1}>Invalidation<//>
+          <${Th} k="date" d=${-1}>Laatste notitie<//>
+          <th>Status</th>
+        </tr></thead>
+        <tbody>
+          ${rows.map(r => {
+            const cur = r.e.currency || "USD", qCur = r.q?.currency || cur;
+            const st = r.st && STATUS[r.st];
+            const note = (r.last?.note || "").replace(/\s+/g, " ").trim();
+            return html`<tr key=${r.e.id} onClick=${() => onOpen(r.e)} title="Openen in kaartweergave">
+              <td>
+                <span className="ticker" style=${{ minWidth: 0, marginRight: 6 }}>${r.e.ticker}</span>
+                <${TabLink} ticker=${r.e.ticker} />
+                <span className="tfs" style=${{ display: "flex", marginTop: 5 }}>${tfsOf(r.e).map(t => html`<${TfBadge} key=${t} tf=${t} />`)}</span>
+              </td>
+              <td><${BiasBadge} label=${r.bias} />${isShort(r.e) && r.e.price ? html`<span className="sub">short</span>` : ""}</td>
+              <td className="num">${r.live ? money(r.live, qCur) : r.loaded ? "—" : "…"}
+                ${r.e.price && html`<span className="sub">in ${money(r.e.price, cur)}</span>`}</td>
+              <td className="num" style=${{ color: r.pnl === null ? "#94a3b8" : r.pnl >= 0 ? "#22c55e" : "#ef4444", fontWeight: 700 }}>${fmtPct(r.pnl)}</td>
+              <td className="num">${r.e.target ? money(r.e.target, cur) : "—"}
+                ${r.toTarget !== null && html`<span className="sub">${fmtPct(r.toTarget)}</span>`}</td>
+              <td className="num">${r.e.invalidation ? money(r.e.invalidation, cur) : "—"}
+                ${r.toInv !== null && html`<span className="sub" style=${{ color: Math.abs(r.toInv) < 3 ? "#fcd34d" : undefined }}>${fmtPct(r.toInv)}</span>`}</td>
+              <td className="last">
+                ${r.last && html`<span className="sub" style=${{ fontFamily: "inherit", marginBottom: 2 }}>${formatDate(r.last.date)} · ${tfInfo(r.last.tf)?.label || "?"}</span>`}
+                ${note.length > 110 ? note.slice(0, 110) + "…" : note || "—"}
+              </td>
+              <td>${st ? html`<span className="st" style=${{ color: st.color, background: st.bg }}>${st.label}</span>` : ""}</td>
+            </tr>`;
+          })}
+        </tbody>
+      </table>
+    </div>
+  </div>`;
+}
+
 // ─── Main app ─────────────────────────────────────────────────────────────────
 function App() {
   const [entries, setEntries] = useState([]);
@@ -605,6 +754,8 @@ function App() {
   const [filterTf, setFilterTf] = useState("All");
   const [filterFolder, setFilterFolder] = useState(URL_TICKER ? "Alle" : "Active");
   const [groupByTicker, setGroupByTicker] = useState(true);
+  const [view, setViewState] = useState(() => { try { return localStorage.getItem("tj-view") || "kaarten"; } catch (_) { return "kaarten"; } });
+  const setView = v => { setViewState(v); try { localStorage.setItem("tj-view", v); } catch (_) {} };
   const [lightbox, setLightbox] = useState(null);
   const [error, setError] = useState("");
 
@@ -752,11 +903,16 @@ function App() {
           ${folderOptions.map(f => html`<option key=${f} value=${f}>${folderIcon(f) + f}</option>`)}
           <option value="Alle">Alle mappen</option>
         </select>
-        <button className="btn" onClick=${() => setGroupByTicker(v => !v)}>${groupByTicker ? "Groep: ticker" : "Groep: datum"}</button>
+        ${view === "kaarten" && html`<button className="btn" onClick=${() => setGroupByTicker(v => !v)}>${groupByTicker ? "Groep: ticker" : "Groep: datum"}</button>`}
+        <div className="seg">
+          <button className=${view === "kaarten" ? "on" : ""} onClick=${() => setView("kaarten")}>Kaarten</button>
+          <button className=${view === "overzicht" ? "on" : ""} onClick=${() => setView("overzicht")}>Overzicht</button>
+        </div>
       </div>
 
       ${loading ? html`<div className="empty">Verbinden met Firebase...</div>`
         : filtered.length === 0 ? html`<div className="empty">${entries.length === 0 ? "Nog geen analyses. Klik op + Nieuwe analyse om te beginnen." : "Geen resultaten voor deze filters."}</div>`
+        : view === "overzicht" ? html`<${Overview} entries=${filtered} onOpen=${e => { setView("kaarten"); setSearch(e.ticker); }} />`
         : groupByTicker ? tickers.map(t => {
             const group = filtered.filter(e => e.ticker === t);
             return html`<div key=${t}>

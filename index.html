@@ -407,8 +407,12 @@ function Level({ label, value, color, sub }) {
   </div>`;
 }
 
-function EntryCard({ entry: e, defaultOpen, allFolders, onDelete, onEdit, onMove, onSaveUpdate, onDeleteUpdate, openImage }) {
+function EntryCard({ entry: e, defaultOpen, editForm, allFolders, onDelete, onEdit, onMove, onSaveUpdate, onDeleteUpdate, openImage }) {
   const [expanded, setExpanded] = useState(!!defaultOpen);
+  const cardRef = useRef();
+  useEffect(() => {
+    if (editForm) { setExpanded(true); setTimeout(() => cardRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 50); }
+  }, [!!editForm]);
   const [adding, setAdding] = useState(false);
   const [editingIdx, setEditingIdx] = useState(null);
   const [showMove, setShowMove] = useState(false);
@@ -440,7 +444,7 @@ function EntryCard({ entry: e, defaultOpen, allFolders, onDelete, onEdit, onMove
   const bytes = expanded ? docBytes(e) : 0;
   const usage = Math.round(bytes / DOC_LIMIT * 100);
 
-  return html`<div className=${"card" + (expanded ? " open" : "")}>
+  return html`<div ref=${cardRef} className=${"card" + (expanded ? " open" : "")} style=${{ scrollMarginTop: 70 }}>
     <div className="card-head" role="button" tabIndex="0" aria-expanded=${expanded}
       onClick=${() => setExpanded(v => !v)}
       onKeyDown=${ev => { if (ev.key === "Enter") setExpanded(v => !v); }}>
@@ -462,6 +466,7 @@ function EntryCard({ entry: e, defaultOpen, allFolders, onDelete, onEdit, onMove
     </div>
 
     ${expanded && html`<div className="body">
+      ${editForm && html`<div style=${{ marginTop: 14 }}>${editForm}</div>`}
       <div className="levels">
         <${Level} label=${`Live koers · ${yahooSymbol(e)}`} value=${livePrice ? money(livePrice, qCur) : loading} sub=${noQuoteHint} />
         ${e.price && html`<${Level} label="P&L" value=${signed(pnl)} color=${pnlColor} />`}
@@ -687,7 +692,7 @@ function App() {
     catch (e) { setError(e.message); }
   }
 
-  function handleEdit(entry) { setEditEntry(entry); setShowForm(true); window.scrollTo({ top: 0, behavior: "smooth" }); }
+  function handleEdit(entry) { setEditEntry(entry); setShowForm(false); }
 
   const allFolders = [...new Set(entries.map(e => e.folder || "Active"))];
   const folderOptions = [...new Set(["Active", "Archief", ...allFolders])];
@@ -705,7 +710,10 @@ function App() {
   }).sort((a, b) => lastActivity(b).localeCompare(lastActivity(a)));
 
   const tickers = [...new Set(filtered.map(e => e.ticker))].sort();
+  const editForm = editEntry && html`<${EntryForm} key=${editEntry.id} initial=${editEntry} saving=${saving} onSave=${handleSave}
+    onCancel=${() => setEditEntry(null)} />`;
   const card = (e, i) => html`<${EntryCard} key=${e.id} entry=${e} defaultOpen=${!!URL_TICKER && i === 0} allFolders=${allFolders}
+    editForm=${editEntry?.id === e.id ? editForm : null}
     onDelete=${handleDelete} onEdit=${handleEdit} onMove=${handleMove}
     onSaveUpdate=${handleSaveUpdate} onDeleteUpdate=${handleDeleteUpdate} openImage=${setLightbox} />`;
 
@@ -723,8 +731,8 @@ function App() {
 
     <div className="wrap">
       ${error && html`<div className="error"><span>⚠️ ${error}</span><button className="btn small ghost" onClick=${() => setError("")}>✕</button></div>`}
-      ${showForm && html`<${EntryForm} key=${editEntry?.id || "new"} initial=${editEntry} defaultTicker=${URL_TICKER} saving=${saving} onSave=${handleSave}
-        onCancel=${() => { setShowForm(false); setEditEntry(null); }} />`}
+      ${showForm && !editEntry && html`<${EntryForm} key="new" defaultTicker=${URL_TICKER} saving=${saving} onSave=${handleSave}
+        onCancel=${() => setShowForm(false)} />`}
 
       <div className="toolbar">
         <input className="inp search" value=${search} onChange=${e => setSearch(e.target.value)} placeholder=${URL_TICKER ? "🔍 Zoek in notities..." : "🔍 Zoek ticker of notitie..."} />

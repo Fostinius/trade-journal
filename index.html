@@ -149,30 +149,55 @@ async function initFirebase() {
   fbFn = { collection, addDoc, getDocs, deleteDoc, doc, updateDoc, query, orderBy };
 }
 
-// ─── Finnhub live koers ───────────────────────────────────────────────────────
+// ─── Live koersen ─────────────────────────────────────────────────────────────
+// Plak hier de URL van je Cloudflare Worker (zie koers-worker.js).
+// Leeg laten = enkel Amerikaanse aandelen via Finnhub.
+const QUOTE_PROXY = "https://koers.j-cauberghe.workers.dev";
 const FINNHUB_KEY = "d8o37fpr01qvtr6m81f0d8o37fpr01qvtr6m81fg";
-const priceCache = {};
-async function fetchPrice(ticker) {
-  if (priceCache[ticker] && Date.now() - priceCache[ticker].ts < 60000) return priceCache[ticker].price;
-  try {
-    const r = await fetch(`https://finnhub.io/api/v1/quote?symbol=${ticker}&token=${FINNHUB_KEY}`);
-    const d = await r.json();
-    if (d.c && d.c > 0) { priceCache[ticker] = { price: d.c, ts: Date.now() }; return d.c; }
-  } catch (_) {}
-  return null;
+
+// Beurs → Yahoo-suffix en standaardvaluta
+const EXCHANGES = [
+  { id: "US", label: "VS (NYSE/Nasdaq)", suffix: "", currency: "USD" },
+  { id: "DE", label: "Xetra / Frankfurt", suffix: ".DE", currency: "EUR" },
+  { id: "AS", label: "Euronext Amsterdam", suffix: ".AS", currency: "EUR" },
+  { id: "BR", label: "Euronext Brussel", suffix: ".BR", currency: "EUR" },
+  { id: "PA", label: "Euronext Parijs", suffix: ".PA", currency: "EUR" },
+  { id: "MI", label: "Milaan", suffix: ".MI", currency: "EUR" },
+  { id: "L", label: "Londen", suffix: ".L", currency: "GBP" },
+  { id: "SW", label: "Zwitserland (SIX)", suffix: ".SW", currency: "CHF" },
+  { id: "BK", label: "Bangkok (SET)", suffix: ".BK", currency: "THB" },
+  { id: "HK", label: "Hongkong", suffix: ".HK", currency: "HKD" },
+  { id: "T", label: "Tokio", suffix: ".T", currency: "JPY" },
+  { id: "TO", label: "Toronto", suffix: ".TO", currency: "CAD" },
+];
+const exchangeOf = e => EXCHANGES.find(x => x.id === (e.exchange || "US")) || EXCHANGES[0];
+function yahooSymbol(e) {
+  const ex = exchangeOf(e);
+  const t = e.ticker.trim().toUpperCase();
+  return ex.id === "US" ? t.replace(/\./g, "-") : t + ex.suffix; // BRK.B → BRK-B, EXV1 → EXV1.DE
 }
-const metricsCache = {};
-async function fetchMetrics(ticker) {
-  if (metricsCache[ticker] && Date.now() - metricsCache[ticker].ts < 3600000) return metricsCache[ticker].data;
+
+const quoteCache = {};
+async function fetchQuote(e) {
+  const ex = exchangeOf(e);
+  const key = ex.id + ":" + e.ticker;
+  if (quoteCache[key] && Date.now() - quoteCache[key].ts < 60000) return quoteCache[key].data;
+  let data = null;
   try {
-    const [p, m] = await Promise.all([
-      fetch(`https://finnhub.io/api/v1/stock/profile2?symbol=${ticker}&token=${FINNHUB_KEY}`).then(r => r.json()),
-      fetch(`https://finnhub.io/api/v1/stock/metric?symbol=${ticker}&metric=all&token=${FINNHUB_KEY}`).then(r => r.json())
-    ]);
-    const data = { marketCap: p.marketCapitalization ?? null, high52: m.metric?.["52WeekHigh"] ?? null, low52: m.metric?.["52WeekLow"] ?? null };
-    metricsCache[ticker] = { data, ts: Date.now() };
-    return data;
-  } catch (_) { return null; }
+    if (QUOTE_PROXY) {
+      const r = await fetch(`${QUOTE_PROXY}?symbol=${encodeURIComponent(yahooSymbol(e))}`);
+      const d = await r.json();
+      if (r.ok && d.price) data = { price: d.price, currency: d.currency, high52: d.high52 ?? null, low52: d.low52 ?? null };
+    } else if (ex.id === "US") {
+      const [q, m] = await Promise.all([
+        fetch(`https://finnhub.io/api/v1/quote?symbol=${e.ticker}&token=${FINNHUB_KEY}`).then(r => r.json()),
+        fetch(`https://finnhub.io/api/v1/stock/metric?symbol=${e.ticker}&metric=all&token=${FINNHUB_KEY}`).then(r => r.json())
+      ]);
+      if (q.c > 0) data = { price: q.c, currency: "USD", high52: m.metric?.["52WeekHigh"] ?? null, low52: m.metric?.["52WeekLow"] ?? null };
+    }
+  } catch (_) {}
+  quoteCache[key] = { data, ts: Date.now() };
+  return data;
 }
 
 // ─── Constants & helpers ──────────────────────────────────────────────────────
@@ -193,10 +218,11 @@ const LEGACY_TF = { Monthly: "1M", Weekly: "1W", Daily: "1D" };
 const normTf = t => !t ? null : (LEGACY_TF[t] || (TIMEFRAMES.some(x => x.id === t) ? t : null));
 const tfInfo = t => TIMEFRAMES.find(x => x.id === normTf(t)) || null;
 
-const CURRENCIES = { USD: "$", EUR: "€", GBP: "£", CHF: "CHF " };
+const CURRENCIES = { USD: "$", EUR: "€", GBP: "£", CHF: "CHF ", THB: "฿", HKD: "HK$", JPY: "¥", CAD: "C$" };
+const SYMBOLS = { ...CURRENCIES, GBp: "p " }; // Londen noteert soms in pence
 const money = (v, cur) => {
   const n = parseFloat(v);
-  return isNaN(n) ? "—" : `${CURRENCIES[cur] ?? "$"}${n.toFixed(2)}`;
+  return isNaN(n) ? "—" : `${SYMBOLS[cur] ?? (cur ? cur + " " : "$")}${n.toFixed(2)}`;
 };
 function formatDate(isoStr) {
   if (!isoStr) return "";
@@ -387,8 +413,7 @@ function EntryCard({ entry: e, defaultOpen, allFolders, onDelete, onEdit, onMove
   const [editingIdx, setEditingIdx] = useState(null);
   const [showMove, setShowMove] = useState(false);
   const [tlFilter, setTlFilter] = useState("all");
-  const [livePrice, setLivePrice] = useState(undefined);
-  const [metrics, setMetrics] = useState(undefined);
+  const [quote, setQuote] = useState(undefined);
 
   const cur = e.currency || "USD";
   const folder = e.folder || "Active";
@@ -399,17 +424,17 @@ function EntryCard({ entry: e, defaultOpen, allFolders, onDelete, onEdit, onMove
   const latestTf = items.find(i => i.tf)?.tf || normTf(e.timeframe) || "1D";
 
   useEffect(() => {
-    if (expanded && e.ticker && livePrice === undefined) {
-      fetchPrice(e.ticker).then(setLivePrice);
-      fetchMetrics(e.ticker).then(m => setMetrics(m));
-    }
-  }, [expanded, e.ticker]);
+    if (expanded && e.ticker) fetchQuote(e).then(setQuote);
+  }, [expanded, e.ticker, e.exchange]);
+  const livePrice = quote?.price ?? null;
+  const qCur = quote?.currency || cur;
 
   const entryPrice = parseFloat(e.price), targetPrice = parseFloat(e.target);
   const pnl = livePrice && entryPrice ? pct(entryPrice, livePrice) : null;
   const toTarget = livePrice && targetPrice ? pct(livePrice, targetPrice) : null;
   const pnlColor = pnl === null ? "#94a3b8" : parseFloat(pnl) >= 0 ? "#22c55e" : "#ef4444";
-  const loading = v => v === undefined ? "laden..." : "—";
+  const loading = quote === undefined ? "laden..." : "—";
+  const noQuoteHint = quote === null ? (QUOTE_PROXY ? `Geen koers voor ${yahooSymbol(e)}. Klopt de beurs?` : "Buitenlandse koersen vereisen de koers-worker") : null;
 
   const shown = tlFilter === "all" ? items : items.filter(i => i.tf === tlFilter);
   const bytes = expanded ? docBytes(e) : 0;
@@ -438,14 +463,14 @@ function EntryCard({ entry: e, defaultOpen, allFolders, onDelete, onEdit, onMove
 
     ${expanded && html`<div className="body">
       <div className="levels">
-        <${Level} label="Live koers" value=${livePrice ? money(livePrice, cur) : loading(livePrice)} />
+        <${Level} label=${`Live koers · ${yahooSymbol(e)}`} value=${livePrice ? money(livePrice, qCur) : loading} sub=${noQuoteHint} />
         ${e.price && html`<${Level} label="P&L" value=${signed(pnl)} color=${pnlColor} />`}
         ${e.target && html`<${Level} label="% naar target" value=${signed(toTarget ?? (entryPrice && targetPrice ? pct(entryPrice, targetPrice) : null))} color="#7dd3fc" />`}
         ${e.price && html`<${Level} label="Instap" value=${money(e.price, cur)} />`}
         ${e.target && html`<${Level} label="Target" value=${money(e.target, cur)} color="#22c55e" />`}
         ${e.invalidation && html`<${Level} label="Invalidation" value=${money(e.invalidation, cur)} color="#f97316" sub=${`Ongeldig ${e.invalidationDir || "onder"} dit niveau`} />`}
-        <${Level} label="52W high" value=${metrics?.high52 ? money(metrics.high52, cur) : loading(metrics)} color="#22c55e" />
-        <${Level} label="52W low" value=${metrics?.low52 ? money(metrics.low52, cur) : loading(metrics)} color="#ef4444" />
+        <${Level} label="52W high" value=${quote?.high52 ? money(quote.high52, qCur) : loading} color="#22c55e" />
+        <${Level} label="52W low" value=${quote?.low52 ? money(quote.low52, qCur) : loading} color="#ef4444" />
       </div>
 
       ${e.setups?.length > 0 && html`<div className="tags">${e.setups.map(s => html`<span key=${s} className="tag">${s}</span>`)}</div>`}
@@ -502,7 +527,7 @@ function EntryCard({ entry: e, defaultOpen, allFolders, onDelete, onEdit, onMove
 
 // ─── Entry form (startanalyse) ────────────────────────────────────────────────
 function EntryForm({ initial, defaultTicker, onSave, onCancel, saving }) {
-  const blank = { ticker: defaultTicker || "", date: new Date().toISOString().slice(0, 10), price: "", target: "", currency: "USD", bias: "Bullish", timeframe: "1D", setups: [], note: "", invalidation: "", invalidationDir: "onder" };
+  const blank = { exchange: "US", ticker: defaultTicker || "", date: new Date().toISOString().slice(0, 10), price: "", target: "", currency: "USD", bias: "Bullish", timeframe: "1D", setups: [], note: "", invalidation: "", invalidationDir: "onder" };
   const [form, setForm] = useState(initial ? { currency: "USD", ...initial, timeframe: normTf(initial.timeframe) || "1D" } : blank);
   const img = useImage(initial?.imageData);
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
@@ -514,6 +539,11 @@ function EntryForm({ initial, defaultTicker, onSave, onCancel, saving }) {
     <div className="row">
       <div className="field"><label>Ticker</label>
         <input className="inp" style=${{ width: 100 }} value=${form.ticker} onChange=${e => set("ticker", e.target.value.toUpperCase())} placeholder="BRK.B" /></div>
+      <div className="field"><label>Beurs</label>
+        <select className="inp" style=${{ width: 170 }} value=${form.exchange || "US"}
+          onChange=${e => { const ex = EXCHANGES.find(x => x.id === e.target.value); setForm(f => ({ ...f, exchange: ex.id, currency: ex.currency })); }}>
+          ${EXCHANGES.map(x => html`<option key=${x.id} value=${x.id}>${x.label}</option>`)}
+        </select></div>
       <div className="field"><label>Datum</label>
         <input className="inp" type="date" style=${{ width: 145 }} value=${form.date} onChange=${e => set("date", e.target.value)} /></div>
       <div className="field"><label>Valuta</label>
@@ -594,7 +624,7 @@ function App() {
     try {
       const payload = {
         ticker: form.ticker.trim().toUpperCase(), date: form.date,
-        price: form.price || "", target: form.target || "", currency: form.currency || "USD",
+        exchange: form.exchange || "US", price: form.price || "", target: form.target || "", currency: form.currency || "USD",
         bias: form.bias, timeframe: form.timeframe, setups: form.setups,
         note: form.note, imageData: form.imageData || "",
         invalidation: form.invalidation || "", invalidationDir: form.invalidationDir || "onder",

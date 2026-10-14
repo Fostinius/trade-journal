@@ -186,9 +186,24 @@ const EXCHANGES = [
   { id: "TO", label: "Toronto", suffix: ".TO", currency: "CAD" },
 ];
 const exchangeOf = e => EXCHANGES.find(x => x.id === (e.exchange || "US")) || EXCHANGES[0];
+// Grondstoffen, indexen en forex → Yahoo-symbool (anders vindt Yahoo een aandeel of niets)
+const SYMBOL_ALIASES = {
+  WTI: "CL=F", USOIL: "CL=F", CRUDE: "CL=F",
+  BRENT: "BZ=F", UKOIL: "BZ=F",
+  XAUUSD: "GC=F", GOLD: "GC=F",
+  XAGUSD: "SI=F", SILVER: "SI=F",
+  XPTUSD: "PL=F", COPPER: "HG=F", NATGAS: "NG=F",
+  DXY: "DX-Y.NYB",
+  HSI: "^HSI", SPX: "^GSPC", NDX: "^NDX", DJI: "^DJI", VIX: "^VIX", DAX: "^GDAXI", BEL20: "^BFX",
+};
+const FX = ["USD", "EUR", "JPY", "GBP", "CHF", "CAD", "AUD", "NZD", "HKD", "THB", "CNY", "SEK", "NOK"];
 function yahooSymbol(e) {
   const ex = exchangeOf(e);
   const t = e.ticker.trim().toUpperCase();
+  if (ex.id === "US") {
+    if (SYMBOL_ALIASES[t]) return SYMBOL_ALIASES[t];
+    if (/^[A-Z]{6}$/.test(t) && FX.includes(t.slice(0, 3)) && FX.includes(t.slice(3))) return t + "=X"; // USDJPY → USDJPY=X
+  }
   return ex.id === "US" ? t.replace(/\./g, "-") : t + ex.suffix; // BRK.B → BRK-B, EXV1 → EXV1.DE
 }
 

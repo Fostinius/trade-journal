@@ -230,6 +230,46 @@ async function fetchQuote(e) {
   return data;
 }
 
+// Dagslotkoersen (±2 jaar) via de koers-worker → EMA 15 / EMA 50 op de daggrafiek
+const histCache = {};
+async function fetchHistory(e) {
+  const ex = exchangeOf(e);
+  const key = ex.id + ":" + e.ticker;
+  if (histCache[key] && Date.now() - histCache[key].ts < 15 * 60000) return histCache[key].data;
+  let data = { status: "error" };
+  if (QUOTE_PROXY) {
+    try {
+      const r = await fetch(`${QUOTE_PROXY}?symbol=${encodeURIComponent(yahooSymbol(e))}&history=1`);
+      const d = await r.json();
+      if (r.ok && Array.isArray(d.closes)) data = { status: "ok", closes: d.closes.filter(v => typeof v === "number" && isFinite(v)), price: d.price ?? null, currency: d.currency };
+      else if (r.ok && d.price) data = { status: "oldworker" }; // worker kent ?history=1 nog niet
+    } catch (_) {}
+  } else data = { status: "noproxy" };
+  histCache[key] = { data, ts: Date.now() };
+  return data;
+}
+
+// EMA zoals TradingView: start met SMA van de eerste n slotkoersen
+function emaSeries(values, n) {
+  if (values.length < n) return null;
+  const k = 2 / (n + 1);
+  let e = values.slice(0, n).reduce((a, b) => a + b, 0) / n;
+  const out = new Array(n - 1).fill(null);
+  out.push(e);
+  for (let i = n; i < values.length; i++) { e = values[i] * k + e * (1 - k); out.push(e); }
+  return out;
+}
+function emaTrend(closes) {
+  const e15 = emaSeries(closes, 15), e50 = emaSeries(closes, 50);
+  if (!e15 || !e50) return null;
+  const last = closes.length - 1;
+  const bull = e15[last] > e50[last];
+  let bars = 0; // aantal dagen sinds de laatste kruising
+  for (let i = last; i >= 49 && (e15[i] > e50[i]) === bull; i--) bars++;
+  const crossed = bars < last - 48; // kruising binnen de beschikbare data
+  return { ema15: e15[last], ema50: e50[last], bull, bars: crossed ? bars : null, spread: (e15[last] - e50[last]) / e50[last] * 100 };
+}
+
 // ─── Constants & helpers ──────────────────────────────────────────────────────
 const BIASES = ["Bullish", "Bearish", "Neutral"];
 const BIAS_COLOR = { Bullish: "#22c55e", Bearish: "#ef4444", Neutral: "#94a3b8" };
@@ -756,6 +796,98 @@ function Overview({ entries, onOpen }) {
   </div>`;
 }
 
+// ─── Posities (startpagina): trend EMA 15 vs EMA 50 op de daggrafiek ─────────
+function Positions({ entries, onOpen }) {
+  const [hist, setHist] = useState({});
+  const [stamp, setStamp] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [sort, setSort] = useState({ key: "ticker", dir: 1 });
+
+  // Eén rij per ticker (+ beurs), meest recente entry eerst
+  const seen = new Map();
+  [...entries].sort((a, b) => lastActivity(b).localeCompare(lastActivity(a))).forEach(e => {
+    const k = exchangeOf(e).id + ":" + e.ticker;
+    if (seen.has(k)) seen.get(k).n++;
+    else seen.set(k, { key: k, e, n: 1 });
+  });
+  const positions = [...seen.values()];
+  const ids = positions.map(p => p.key).join(",");
+
+  async function load(force) {
+    setBusy(true);
+    if (force) Object.keys(histCache).forEach(k => delete histCache[k]);
+    const res = await mapLimit(positions, 4, p => fetchHistory(p.e));
+    const m = {}; positions.forEach((p, i) => { m[p.key] = res[i]; });
+    setHist(m); setStamp(new Date()); setBusy(false);
+  }
+  useEffect(() => { load(false); }, [ids]);
+
+  const rows = positions.map(p => {
+    const h = hist[p.key];
+    const t = h?.status === "ok" ? emaTrend(h.closes) : null;
+    const live = h?.status === "ok" ? (h.price ?? h.closes[h.closes.length - 1]) : null;
+    return { ...p, h, t, live, cur: h?.currency || p.e.currency || "USD" };
+  });
+  const val = r => sort.key === "trend" ? (r.t ? (r.t.bull ? 1 : 0) : -1)
+    : sort.key === "spread" ? (r.t ? r.t.spread : -1e9)
+    : sort.key === "bars" ? (r.t?.bars ?? 1e9)
+    : r.e.ticker;
+  rows.sort((a, b) => { const x = val(a), y = val(b); return ((x < y ? -1 : x > y ? 1 : 0) * sort.dir) || a.e.ticker.localeCompare(b.e.ticker); });
+  const sortBy = (key, dir) => setSort(s => s.key === key ? { key, dir: -s.dir } : { key, dir });
+  const Th = ({ k, d, children }) => html`<th className=${"sort" + (sort.key === k ? " on" : "")} onClick=${() => sortBy(k, d)}>
+    ${children}${sort.key === k ? (sort.dir === 1 ? " ▲" : " ▼") : ""}</th>`;
+
+  const nBull = rows.filter(r => r.t?.bull).length;
+  const nBear = rows.filter(r => r.t && !r.t.bull).length;
+  const oldWorker = rows.some(r => r.h?.status === "oldworker");
+
+  return html`<div>
+    ${oldWorker && html`<div className="error"><span>⚠️ Je koers-worker geeft nog geen dagkoersen terug. Vervang de code van de worker in Cloudflare door <b>koers-worker.js</b> uit de repo; daarna verschijnt de trend hier.</span></div>`}
+    <div className="ov-sum">
+      <span><b>${rows.length}</b> ${rows.length === 1 ? "positie" : "posities"}</span>
+      <span style=${{ color: BIAS_COLOR.Bullish }}>${nBull} bullish</span>
+      <span style=${{ color: BIAS_COLOR.Bearish }}>${nBear} bearish</span>
+      <span className="hint">Trend = EMA 15 boven EMA 50 op de daggrafiek</span>
+      <span style=${{ marginLeft: "auto" }}>${busy ? "Dagkoersen laden..." : stamp ? `Data van ${stamp.toLocaleTimeString("nl-BE", { hour: "2-digit", minute: "2-digit" })}` : ""}</span>
+      <button className="btn small" disabled=${busy} onClick=${() => load(true)}>↻ Vernieuw</button>
+    </div>
+    <div className="ov-wrap">
+      <table className="ov" style=${{ minWidth: 640 }}>
+        <thead><tr>
+          <${Th} k="ticker" d=${1}>Ticker<//>
+          <th>Koers</th>
+          <th>EMA 15 (D)</th>
+          <th>EMA 50 (D)</th>
+          <${Th} k="trend" d=${-1}>Trend<//>
+          <${Th} k="spread" d=${-1}>Afstand<//>
+          <${Th} k="bars" d=${1}>Sinds kruising<//>
+        </tr></thead>
+        <tbody>
+          ${rows.map(r => {
+            const loaded = r.h !== undefined;
+            const na = !loaded ? "…" : "—";
+            const folder = r.e.folder || "Active";
+            return html`<tr key=${r.key} onClick=${() => onOpen(r.e)} title="Openen in kaartweergave">
+              <td>
+                <span className="ticker" style=${{ minWidth: 0, marginRight: 6 }}>${r.e.ticker}</span>
+                <${TabLink} ticker=${r.e.ticker} />
+                <span className="sub">${yahooSymbol(r.e)}${r.n > 1 ? ` · ${r.n} entries` : ""}${folder !== "Active" ? ` · ${folder}` : ""}</span>
+              </td>
+              <td className="num">${r.live ? money(r.live, r.cur) : na}</td>
+              <td className="num">${r.t ? money(r.t.ema15, r.cur) : na}</td>
+              <td className="num">${r.t ? money(r.t.ema50, r.cur) : na}</td>
+              <td>${r.t ? html`<${BiasBadge} label=${r.t.bull ? "Bullish" : "Bearish"} />`
+                : loaded ? html`<span className="hint">${r.h?.status === "ok" ? "te weinig data" : r.h?.status === "oldworker" ? "worker updaten" : "geen data"}</span>` : "…"}</td>
+              <td className="num" style=${{ color: r.t ? (r.t.bull ? "#22c55e" : "#ef4444") : undefined }}>${r.t ? fmtPct(r.t.spread) : na}</td>
+              <td className="num">${r.t ? (r.t.bars === null ? "> 1 jaar" : `${r.t.bars} ${r.t.bars === 1 ? "dag" : "dagen"}`) : na}</td>
+            </tr>`;
+          })}
+        </tbody>
+      </table>
+    </div>
+  </div>`;
+}
+
 // ─── Main app ─────────────────────────────────────────────────────────────────
 function App() {
   const [entries, setEntries] = useState([]);
@@ -769,8 +901,8 @@ function App() {
   const [filterTf, setFilterTf] = useState("All");
   const [filterFolder, setFilterFolder] = useState(URL_TICKER ? "Alle" : "Active");
   const [groupByTicker, setGroupByTicker] = useState(true);
-  const [view, setViewState] = useState(() => { try { return localStorage.getItem("tj-view") || "kaarten"; } catch (_) { return "kaarten"; } });
-  const setView = v => { setViewState(v); try { localStorage.setItem("tj-view", v); } catch (_) {} };
+  // Startpagina = Posities; in een ticker-tabblad meteen de kaarten
+  const [view, setView] = useState(URL_TICKER ? "kaarten" : "posities");
   const [lightbox, setLightbox] = useState(null);
   const [error, setError] = useState("");
 
@@ -920,6 +1052,7 @@ function App() {
         </select>
         ${view === "kaarten" && html`<button className="btn" onClick=${() => setGroupByTicker(v => !v)}>${groupByTicker ? "Groep: ticker" : "Groep: datum"}</button>`}
         <div className="seg">
+          <button className=${view === "posities" ? "on" : ""} onClick=${() => setView("posities")}>Posities</button>
           <button className=${view === "kaarten" ? "on" : ""} onClick=${() => setView("kaarten")}>Kaarten</button>
           <button className=${view === "overzicht" ? "on" : ""} onClick=${() => setView("overzicht")}>Overzicht</button>
         </div>
@@ -927,6 +1060,7 @@ function App() {
 
       ${loading ? html`<div className="empty">Verbinden met Firebase...</div>`
         : filtered.length === 0 ? html`<div className="empty">${entries.length === 0 ? "Nog geen analyses. Klik op + Nieuwe analyse om te beginnen." : "Geen resultaten voor deze filters."}</div>`
+        : view === "posities" ? html`<${Positions} entries=${filtered} onOpen=${e => { setView("kaarten"); setSearch(e.ticker); }} />`
         : view === "overzicht" ? html`<${Overview} entries=${filtered} onOpen=${e => { setView("kaarten"); setSearch(e.ticker); }} />`
         : groupByTicker ? tickers.map(t => {
             const group = filtered.filter(e => e.ticker === t);

@@ -806,7 +806,7 @@ function Positions({ entries, onOpen }) {
   // Eén rij per ticker (+ beurs), meest recente entry eerst
   const seen = new Map();
   [...entries].sort((a, b) => lastActivity(b).localeCompare(lastActivity(a))).forEach(e => {
-    const k = exchangeOf(e).id + ":" + e.ticker;
+    const k = yahooSymbol(e); // zelfde symbool = zelfde positie (ook bij spaties/hoofdletters)
     if (seen.has(k)) seen.get(k).n++;
     else seen.set(k, { key: k, e, n: 1 });
   });

@@ -964,17 +964,35 @@ function Positions({ entries, onOpen }) {
 }
 
 // ─── Sectoren: price action van de Amerikaanse sector-ETF's ──────────────────
-const SECTORS = [
-  { t: "XLK", n: "Technologie" }, { t: "XLC", n: "Communicatie" }, { t: "XLY", n: "Cyclische consumptie" },
-  { t: "XLP", n: "Basisconsumptie" }, { t: "XLE", n: "Energie" }, { t: "XLF", n: "Financiëlen" },
-  { t: "XLV", n: "Gezondheidszorg" }, { t: "XLI", n: "Industrie" }, { t: "XLB", n: "Materialen" },
-  { t: "XLRE", n: "Vastgoed" }, { t: "XLU", n: "Nutsbedrijven" },
-];
-const BENCH = { t: "SPY", n: "S&P 500" };
+const SECTOR_SETS = {
+  us: {
+    label: "11 sectoren (SPDR)", exchange: "US", currency: "USD", tv: "AMEX", benchShort: "SPY",
+    benches: [{ t: "SPY", n: "S&P 500" }],
+    sectors: [
+      { t: "XLK", n: "Technologie" }, { t: "XLC", n: "Communicatie" }, { t: "XLY", n: "Cyclische consumptie" },
+      { t: "XLP", n: "Basisconsumptie" }, { t: "XLE", n: "Energie" }, { t: "XLF", n: "Financiëlen" },
+      { t: "XLV", n: "Gezondheidszorg" }, { t: "XLI", n: "Industrie" }, { t: "XLB", n: "Materialen" },
+      { t: "XLRE", n: "Vastgoed" }, { t: "XLU", n: "Nutsbedrijven" },
+    ],
+  },
+  eu: {
+    label: "STOXX Europe 600-sectoren (iShares, Xetra)", exchange: "DE", currency: "EUR", tv: "XETR", benchShort: "STOXX 600",
+    benches: [{ t: "EXSA", n: "STOXX Europe 600" }, { t: "EXW1", n: "Euro Stoxx 50" }],   // eerste = maatstaf voor RS en RRG
+    sectors: [
+      { t: "EXV3", n: "Technologie", s: "Tech" }, { t: "EXV2", n: "Telecom", s: "Telecom" }, { t: "EXH6", n: "Media", s: "Media" },
+      { t: "EXV1", n: "Banken", s: "Banken" }, { t: "EXH5", n: "Verzekeringen", s: "Verzekeraars" }, { t: "EXH2", n: "Financiële diensten", s: "Fin. diensten" },
+      { t: "EXV4", n: "Gezondheidszorg", s: "Gezondheid" }, { t: "EXH1", n: "Olie & gas", s: "Olie & gas" }, { t: "EXH9", n: "Nutsbedrijven", s: "Nuts" },
+      { t: "EXH4", n: "Industriële goederen", s: "Industrie" }, { t: "EXV8", n: "Bouw & materialen", s: "Bouw" }, { t: "EXV6", n: "Basisgrondstoffen", s: "Grondstoffen" },
+      { t: "EXV7", n: "Chemie", s: "Chemie" }, { t: "EXV5", n: "Auto's & onderdelen", s: "Auto's" }, { t: "EXH3", n: "Voeding & dranken", s: "Voeding" },
+      { t: "EXH7", n: "Persoonlijke & huish. goederen", s: "Huish. goederen" }, { t: "EXH8", n: "Retail", s: "Retail" }, { t: "EXV9", n: "Reizen & vrije tijd", s: "Reizen" },
+      { t: "EXI5", n: "Vastgoed", s: "Vastgoed" },
+    ],
+  },
+};
 const PERIODS = [{ k: "d1", label: "1D", n: 1 }, { k: "w1", label: "1W", n: 5 }, { k: "m1", label: "1M", n: 21 },
   { k: "m3", label: "3M", n: 63 }, { k: "y1", label: "1J", n: 252 }];
 const perfN = (c, n) => c.length > n ? (c[c.length - 1] / c[c.length - 1 - n] - 1) * 100 : null;
-const tvUrl = t => `https://www.tradingview.com/chart/?symbol=AMEX%3A${t}`;
+const tvUrl = (t, ex = "AMEX") => `https://www.tradingview.com/chart/?symbol=${ex}%3A${t}`;
 
 function heatStyle(v, scale) {
   if (v === null || v === undefined) return { color: "#64748b" };
@@ -998,6 +1016,8 @@ function Spark({ closes, n = 63 }) {
 }
 
 // RRG (Relative Rotation Graph) — benadering van JdK RS-Ratio / RS-Momentum op weekbasis
+const RRG_PALETTE = ["#60a5fa", "#c084fc", "#f472b6", "#a3e635", "#fb923c", "#38bdf8", "#34d399", "#facc15", "#f87171", "#e879f9",
+  "#2dd4bf", "#fda4af", "#93c5fd", "#fcd34d", "#86efac", "#d8b4fe", "#fdba74", "#67e8f9", "#bef264"];
 const RRG_COLORS = { XLK: "#60a5fa", XLC: "#c084fc", XLY: "#f472b6", XLP: "#a3e635", XLE: "#fb923c", XLF: "#38bdf8",
   XLV: "#34d399", XLI: "#facc15", XLB: "#f87171", XLRE: "#e879f9", XLU: "#2dd4bf" };
 const smaAt = (a, i, n) => { if (i < n - 1) return null; let s = 0; for (let k = i - n + 1; k <= i; k++) s += a[k]; return s / n; };
@@ -1024,7 +1044,7 @@ function rrgSeries(closes, bench, tail = 8) {
 const quadrant = p => p.x >= 100 ? (p.y >= 100 ? "Leading" : "Weakening") : (p.y >= 100 ? "Improving" : "Lagging");
 const QUAD_COLOR = { Leading: "#22c55e", Weakening: "#f59e0b", Lagging: "#ef4444", Improving: "#38bdf8" };
 
-function RRG({ series }) {
+function RRG({ series, benchName = "SPY", labels = {} }) {
   const [hover, setHover] = useState(null);
   const items = Object.entries(series).filter(([, pts]) => pts);
   if (!items.length) return null;
@@ -1043,7 +1063,7 @@ function RRG({ series }) {
   const ticks = [-1, -0.5, 0.5, 1].map(f => 100 + f * span * 0.85).map(v => Math.round(v * 2) / 2).filter((v, i, a) => v !== 100 && a.indexOf(v) === i);
   return html`<div style=${{ marginTop: 22 }}>
     <div className="ov-sum" style=${{ marginBottom: 6 }}>
-      <span><b>Relative Rotation Graph</b> · sectoren tegenover SPY · staart = laatste 8 weken</span>
+      <span><b>Relative Rotation Graph</b> · sectoren tegenover ${benchName} · staart = laatste 8 weken</span>
     </div>
     <div className="ov-wrap" style=${{ padding: 10 }}>
       <svg viewBox=${`0 0 ${W} ${H}`} style=${{ width: "100%", maxWidth: 900, display: "block", margin: "0 auto" }} role="img" aria-label="Relative Rotation Graph van de sector-ETF's">
@@ -1058,18 +1078,18 @@ function RRG({ series }) {
           <text x=${sx(v)} y=${H - P + 16} textAnchor="middle" fill="#64748b" fontSize="11">${v.toFixed(1)}</text>
           <text x=${P - 6} y=${sy(v) + 4} textAnchor="end" fill="#64748b" fontSize="11">${v.toFixed(1)}</text>
         </g>`)}
-        <text x=${W / 2} y=${H - 8} textAnchor="middle" fill="#94a3b8" fontSize="12">RS-Ratio → (relatieve sterkte vs SPY)</text>
+        <text x=${W / 2} y=${H - 8} textAnchor="middle" fill="#94a3b8" fontSize="12">RS-Ratio → (relatieve sterkte vs ${benchName})</text>
         <text x=${P} y=${P - 12} fill="#94a3b8" fontSize="12">↑ RS-Momentum (versnelt de relatieve sterkte?)</text>
-        ${items.map(([t, pts]) => {
-          const col = RRG_COLORS[t] || "#e2e8f0", last = pts[pts.length - 1];
+        ${items.map(([t, pts], idx) => {
+          const col = RRG_COLORS[t] || RRG_PALETTE[idx % RRG_PALETTE.length], last = pts[pts.length - 1];
           const dim = hover && hover !== t;
           return html`<g key=${t} opacity=${dim ? 0.15 : 1} style=${{ cursor: "pointer" }}
             onMouseEnter=${() => setHover(t)} onMouseLeave=${() => setHover(null)}>
             <polyline points=${pts.map(p => `${sx(p.x)},${sy(p.y)}`).join(" ")} fill="none" stroke=${col} strokeWidth=${hover === t ? 2.5 : 1.6} strokeOpacity="0.85" />
             ${pts.slice(0, -1).map((p, i) => html`<circle key=${i} cx=${sx(p.x)} cy=${sy(p.y)} r="2.4" fill=${col} opacity=${0.35 + 0.5 * i / pts.length} />`)}
             <circle cx=${sx(last.x)} cy=${sy(last.y)} r="6" fill=${col} stroke="#020617" strokeWidth="1.5" />
-            <text x=${sx(last.x) + 9} y=${sy(last.y) + 4} fill=${col} fontSize="12" fontWeight="700" fontFamily="monospace">${t}</text>
-            <title>${t}: ${quadrant(last)} · RS-Ratio ${last.x.toFixed(2)} · RS-Momentum ${last.y.toFixed(2)}</title>
+            <text x=${sx(last.x) + 9} y=${sy(last.y) + 4} fill=${col} fontSize="12" fontWeight="700" fontFamily=${labels[t] ? "inherit" : "monospace"}>${labels[t] || t}</text>
+            <title>${labels[t] ? labels[t] + " (" + t + ")" : t}: ${quadrant(last)} · RS-Ratio ${last.x.toFixed(2)} · RS-Momentum ${last.y.toFixed(2)}</title>
           </g>`;
         })}
       </svg>
@@ -1078,7 +1098,8 @@ function RRG({ series }) {
   </div>`;
 }
 
-function Sectors({ entries, onOpen }) {
+function Sectors({ entries, onOpen, set: cfgKey = "us" }) {
+  const cfg = SECTOR_SETS[cfgKey];
   const [hist, setHist] = useState({});
   const [stamp, setStamp] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -1086,13 +1107,13 @@ function Sectors({ entries, onOpen }) {
 
   async function load(force) {
     setBusy(true);
-    const list = [BENCH, ...SECTORS];
-    if (force) list.forEach(x => delete histCache["US:" + x.t]);
-    const res = await mapLimit(list, 4, x => fetchHistory({ ticker: x.t, exchange: "US" }));
+    const list = [...cfg.benches, ...cfg.sectors];
+    if (force) list.forEach(x => delete histCache[cfg.exchange + ":" + x.t]);
+    const res = await mapLimit(list, 4, x => fetchHistory({ ticker: x.t, exchange: cfg.exchange }));
     const m = {}; list.forEach((x, i) => { m[x.t] = res[i]; });
     setHist(m); setStamp(new Date()); setBusy(false);
   }
-  useEffect(() => { load(false); }, []);
+  useEffect(() => { setHist({}); load(false); }, [cfgKey]);
 
   const build = x => {
     const h = hist[x.t];
@@ -1100,36 +1121,38 @@ function Sectors({ entries, onOpen }) {
     const r = { ...x, h, c, live: c ? (h.price ?? c[c.length - 1]) : null, trend: c ? emaTrend(c) : null };
     PERIODS.forEach(p => { r[p.k] = c ? perfN(c, p.n) : null; });
     r.hi = c ? (r.live / Math.max(...c.slice(-252)) - 1) * 100 : null;
-    r.inJournal = entries.find(e => (e.exchange || "US") === "US" && e.ticker.trim().toUpperCase() === x.t);
+    r.inJournal = entries.find(e => (e.exchange || "US") === cfg.exchange && e.ticker.trim().toUpperCase() === x.t);
     return r;
   };
-  const bench = build(BENCH);
-  const rows = SECTORS.map(build).map(r => ({ ...r, rs: r.m3 !== null && bench.m3 !== null ? r.m3 - bench.m3 : null }));
-  bench.rs = bench.m3 !== null ? 0 : null; bench.isBench = true;
-  const table = [bench, ...rows];                                   // SPY sorteert mee als scheidingslijn
+  const benches = cfg.benches.map(build);
+  const bench = benches[0];                                         // maatstaf voor RS en RRG
+  const rsOf = r => r.m3 !== null && bench.m3 !== null ? r.m3 - bench.m3 : null;
+  const rows = cfg.sectors.map(build).map(r => ({ ...r, rs: rsOf(r) }));
+  benches.forEach((b, i) => { b.rs = i === 0 ? (bench.m3 !== null ? 0 : null) : rsOf(b); b.isBench = true; b.isMain = i === 0; });
+  const table = [...benches, ...rows];                              // maatstaven sorteren mee als scheidingslijn
   const val = r => sort.key === "ticker" ? r.t : sort.key === "trend" ? (r.trend ? (r.trend.bull ? 1 : 0) : -1) : (r[sort.key] ?? -1e9);
-  table.sort((a, b) => { const x = val(a), y = val(b); return ((x < y ? -1 : x > y ? 1 : 0) * sort.dir) || (a.isBench ? -1 : b.isBench ? 1 : 0); });
+  table.sort((a, b) => { const x = val(a), y = val(b); return ((x < y ? -1 : x > y ? 1 : 0) * sort.dir) || (a.isMain ? -1 : b.isMain ? 1 : 0); });
   const sortBy = (key, dir) => setSort(s => s.key === key ? { key, dir: -s.dir } : { key, dir });
   const Th = ({ k, d, r, children }) => html`<th className=${"sort" + (sort.key === k ? " on" : "") + (r ? " r" : "")} onClick=${() => sortBy(k, d)}>
     ${children}${sort.key === k ? (sort.dir === 1 ? " ▲" : " ▼") : ""}</th>`;
 
   const ranked = rows.filter(r => r.w1 !== null).sort((a, b) => b.w1 - a.w1);
   const rrg = {};
-  if (bench.c) SECTORS.forEach(x => { const r = rows.find(y => y.t === x.t); rrg[x.t] = r?.c ? rrgSeries(r.c, bench.c) : null; });
+  if (bench.c) rows.forEach(r => { rrg[r.t] = r.c ? rrgSeries(r.c, bench.c) : null; });
   const nBull = rows.filter(r => r.trend?.bull).length, nBear = rows.filter(r => r.trend && !r.trend.bull).length;
-  const oldWorker = [bench, ...rows].some(r => r.h?.status === "oldworker");
+  const oldWorker = [...benches, ...rows].some(r => r.h?.status === "oldworker");
   const scale = { d1: 2, w1: 4, m1: 8, m3: 12, y1: 25 };
 
-  const row = (r, isBench) => html`<tr key=${r.t} className=${isBench ? "bench" : ""} title=${isBench ? "Maatstaf: sectoren boven deze rij doen het beter dan de S&P 500" : undefined}>
+  const row = (r, isBench) => html`<tr key=${r.t} className=${isBench ? "bench" : ""} title=${isBench ? `Maatstaf: sectoren boven deze rij doen het beter dan de ${r.n}` : undefined}>
     <td>
-      <a className="ticker" style=${{ minWidth: 0, textDecoration: "none", color: "#f8fafc" }} href=${tvUrl(r.t)} target="_blank" rel="noopener" title="Openen in TradingView">${r.t}</a>
+      <a className="ticker" style=${{ minWidth: 0, textDecoration: "none", color: "#f8fafc" }} href=${tvUrl(r.t, cfg.tv)} target="_blank" rel="noopener" title="Openen in TradingView">${r.t}</a>
       ${r.inJournal && html` <button className="btn small" title="Openen in je journal" onClick=${() => onOpen(r.inJournal)}>📓</button>`}
       <span className="sec-name">${r.n}</span>
     </td>
     <td><${Spark} closes=${r.c} /></td>
-    <td className="num">${r.live ? money(r.live, "USD") : r.h ? "—" : "…"}</td>
+    <td className="num">${r.live ? money(r.live, cfg.currency) : r.h ? "—" : "…"}</td>
     ${PERIODS.map(p => html`<td key=${p.k} className="heat" style=${heatStyle(r[p.k], scale[p.k])}>${r.h ? fmtPct(r[p.k]) : "…"}</td>`)}
-    <td className="heat" style=${isBench ? { color: "#64748b" } : heatStyle(r.rs, 6)}>${isBench ? "—" : r.h ? fmtPct(r.rs) : "…"}</td>
+    <td className="heat" style=${r.isMain ? { color: "#64748b" } : heatStyle(r.rs, 6)}>${r.isMain ? "—" : r.h ? fmtPct(r.rs) : "…"}</td>
     <td className="num" style=${{ textAlign: "right", color: r.hi !== null && r.hi > -3 ? "#4ade80" : "#cbd5e1" }}>${r.h ? fmtPct(r.hi) : "…"}</td>
     <td>${r.trend ? html`<${BiasBadge} label=${r.trend.bull ? "Bullish" : "Bearish"} />` : r.h ? html`<span className="hint">geen data</span>` : "…"}
       ${r.trend?.bars != null && html`<span className="sub">${r.trend.bars} ${r.trend.bars === 1 ? "dag" : "dagen"}</span>`}</td>
@@ -1138,10 +1161,10 @@ function Sectors({ entries, onOpen }) {
   return html`<div>
     ${oldWorker && html`<div className="error"><span>⚠️ Je koers-worker geeft nog geen dagkoersen terug. Vervang de code van de worker in Cloudflare door <b>koers-worker.js</b> uit de repo.</span></div>`}
     <div className="ov-sum">
-      <span><b>11</b> sectoren (SPDR)</span>
+      <span>${cfg.label}</span>
       <span style=${{ color: BIAS_COLOR.Bullish }}>${nBull} bullish</span>
       <span style=${{ color: BIAS_COLOR.Bearish }}>${nBear} bearish</span>
-      ${ranked.length > 0 && html`<span>Sterkst deze week: <b style=${{ color: "#4ade80" }}>${ranked[0].t}</b> · zwakst: <b style=${{ color: "#f87171" }}>${ranked[ranked.length - 1].t}</b></span>`}
+      ${ranked.length > 0 && html`<span>Sterkst deze week: <b style=${{ color: "#4ade80" }}>${ranked[0].t}</b>${ranked[0].s ? ` (${ranked[0].s})` : ""} · zwakst: <b style=${{ color: "#f87171" }}>${ranked[ranked.length - 1].t}</b>${ranked[ranked.length - 1].s ? ` (${ranked[ranked.length - 1].s})` : ""}</span>`}
       <span style=${{ marginLeft: "auto" }}>${busy ? "Dagkoersen laden..." : stamp ? `Data van ${stamp.toLocaleTimeString("nl-BE", { hour: "2-digit", minute: "2-digit" })}` : ""}</span>
       <button className="btn small" disabled=${busy} onClick=${() => load(true)}>↻ Vernieuw</button>
     </div>
@@ -1152,7 +1175,7 @@ function Sectors({ entries, onOpen }) {
           <th>3 maanden <span style=${{ color: "#fbbf24" }}>— EMA15</span> <span>┄ EMA50</span></th>
           <th>Koers</th>
           ${PERIODS.map(p => html`<${Th} key=${p.k} k=${p.k} d=${-1} r=${true}>${p.label}<//>`)}
-          <${Th} k="rs" d=${-1} r=${true}>vs SPY (3M)<//>
+          <${Th} k="rs" d=${-1} r=${true}>vs ${cfg.benchShort} (3M)<//>
           <${Th} k="hi" d=${-1} r=${true}>van 52W top<//>
           <${Th} k="trend" d=${-1}>Trend (D)<//>
         </tr></thead>
@@ -1162,7 +1185,7 @@ function Sectors({ entries, onOpen }) {
       </table>
     </div>
     <p className="hint" style=${{ marginTop: 8 }}>Rendement op basis van slotkoersen (1W = 5, 1M = 21, 3M = 63 handelsdagen). Trend = EMA 15 boven EMA 50 op de daggrafiek. Klik op een ticker om de chart in TradingView te openen.</p>
-    <${RRG} series=${rrg} />
+    <${RRG} key=${cfgKey} series=${rrg} benchName=${cfg.benchShort} labels=${Object.fromEntries(cfg.sectors.filter(x => x.s).map(x => [x.t, x.s]))} />
   </div>`;
 }
 
@@ -1305,13 +1328,13 @@ function App() {
       </button>
     </div>
 
-    <div className=${"wrap" + (view === "sectoren" ? " wide" : "")}>
+    <div className=${"wrap" + (view === "sectoren" || view === "eurosectoren" ? " wide" : "")}>
       ${error && html`<div className="error"><span>⚠️ ${error}</span><button className="btn small ghost" onClick=${() => setError("")}>✕</button></div>`}
       ${showForm && !editEntry && html`<${EntryForm} key="new" defaultTicker=${URL_TICKER} saving=${saving} onSave=${handleSave}
         onCancel=${() => setShowForm(false)} />`}
 
       <div className="toolbar">
-        ${view !== "sectoren" && html`<input className="inp search" value=${search} onChange=${e => setSearch(e.target.value)} placeholder=${URL_TICKER ? "🔍 Zoek in notities..." : "🔍 Zoek ticker of notitie..."} />
+        ${view !== "sectoren" && view !== "eurosectoren" && html`<input className="inp search" value=${search} onChange=${e => setSearch(e.target.value)} placeholder=${URL_TICKER ? "🔍 Zoek in notities..." : "🔍 Zoek ticker of notitie..."} />
         <select className="inp" value=${filterTf} onChange=${e => setFilterTf(e.target.value)}>
           <option value="All">Alle timeframes</option>
           ${TIMEFRAMES.map(t => html`<option key=${t.id} value=${t.id}>${t.label}</option>`)}
@@ -1333,11 +1356,12 @@ function App() {
           <button className=${view === "posities" ? "on" : ""} onClick=${() => setView("posities")}>Posities</button>
           <button className=${view === "kaarten" ? "on" : ""} onClick=${() => setView("kaarten")}>Kaarten</button>
           <button className=${view === "overzicht" ? "on" : ""} onClick=${() => setView("overzicht")}>Overzicht</button>
-          <button className=${view === "sectoren" ? "on" : ""} onClick=${() => setView("sectoren")}>Sectoren</button>
+          <button className=${view === "sectoren" ? "on" : ""} onClick=${() => setView("sectoren")}>US sectoren</button>
+          <button className=${view === "eurosectoren" ? "on" : ""} onClick=${() => setView("eurosectoren")}>Euro sectoren</button>
         </div>
       </div>
 
-      ${view === "sectoren" ? html`<${Sectors} entries=${entries} onOpen=${e => { setView("kaarten"); setFilterFolder("Alle"); setSearch(e.ticker); }} />`
+      ${view === "sectoren" || view === "eurosectoren" ? html`<${Sectors} key=${view} set=${view === "sectoren" ? "us" : "eu"} entries=${entries} onOpen=${e => { setView("kaarten"); setFilterFolder("Alle"); setSearch(e.ticker); }} />`
         : loading ? html`<div className="empty">Verbinden met Firebase...</div>`
         : filtered.length === 0 ? html`<div className="empty">${entries.length === 0 ? "Nog geen analyses. Klik op + Nieuwe analyse om te beginnen." : "Geen resultaten voor deze filters."}</div>`
         : view === "posities" ? html`<${Positions} entries=${filtered} onOpen=${e => { setView("kaarten"); setSearch(e.ticker); }} />`

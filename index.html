@@ -137,7 +137,7 @@
     .heat { font-family: monospace; white-space: nowrap; font-weight: 600; text-align: right; }
     .ov th.r { text-align: right; }
     .sec-name { display: block; font-size: 11px; color: var(--muted); }
-    .bench td { background: var(--panel2); }
+    .bench td { background: #13213a; border-top: 1px solid #38bdf8aa; border-bottom: 1px solid #38bdf8aa; }
     .lightbox { position: fixed; inset: 0; background: rgba(2, 6, 23, .94); display: flex; align-items: center; justify-content: center; z-index: 300; padding: 16px; cursor: zoom-out; }
     .lightbox img { max-width: 100%; max-height: 100%; border-radius: 6px; }
 
@@ -1105,8 +1105,10 @@ function Sectors({ entries, onOpen }) {
   };
   const bench = build(BENCH);
   const rows = SECTORS.map(build).map(r => ({ ...r, rs: r.m3 !== null && bench.m3 !== null ? r.m3 - bench.m3 : null }));
+  bench.rs = bench.m3 !== null ? 0 : null; bench.isBench = true;
+  const table = [bench, ...rows];                                   // SPY sorteert mee als scheidingslijn
   const val = r => sort.key === "ticker" ? r.t : sort.key === "trend" ? (r.trend ? (r.trend.bull ? 1 : 0) : -1) : (r[sort.key] ?? -1e9);
-  rows.sort((a, b) => { const x = sort.key === "ticker" ? a.t : val(a), y = sort.key === "ticker" ? b.t : val(b); return (x < y ? -1 : x > y ? 1 : 0) * sort.dir; });
+  table.sort((a, b) => { const x = val(a), y = val(b); return ((x < y ? -1 : x > y ? 1 : 0) * sort.dir) || (a.isBench ? -1 : b.isBench ? 1 : 0); });
   const sortBy = (key, dir) => setSort(s => s.key === key ? { key, dir: -s.dir } : { key, dir });
   const Th = ({ k, d, r, children }) => html`<th className=${"sort" + (sort.key === k ? " on" : "") + (r ? " r" : "")} onClick=${() => sortBy(k, d)}>
     ${children}${sort.key === k ? (sort.dir === 1 ? " ▲" : " ▼") : ""}</th>`;
@@ -1118,7 +1120,7 @@ function Sectors({ entries, onOpen }) {
   const oldWorker = [bench, ...rows].some(r => r.h?.status === "oldworker");
   const scale = { d1: 2, w1: 4, m1: 8, m3: 12, y1: 25 };
 
-  const row = (r, isBench) => html`<tr key=${r.t} className=${isBench ? "bench" : ""}>
+  const row = (r, isBench) => html`<tr key=${r.t} className=${isBench ? "bench" : ""} title=${isBench ? "Maatstaf: sectoren boven deze rij doen het beter dan de S&P 500" : undefined}>
     <td>
       <a className="ticker" style=${{ minWidth: 0, textDecoration: "none", color: "#f8fafc" }} href=${tvUrl(r.t)} target="_blank" rel="noopener" title="Openen in TradingView">${r.t}</a>
       ${r.inJournal && html` <button className="btn small" title="Openen in je journal" onClick=${() => onOpen(r.inJournal)}>📓</button>`}
@@ -1155,8 +1157,7 @@ function Sectors({ entries, onOpen }) {
           <${Th} k="trend" d=${-1}>Trend (D)<//>
         </tr></thead>
         <tbody>
-          ${row(bench, true)}
-          ${rows.map(r => row(r, false))}
+          ${table.map(r => row(r, !!r.isBench))}
         </tbody>
       </table>
     </div>

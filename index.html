@@ -32,6 +32,7 @@
     .brand { font-family: monospace; font-size: 17px; font-weight: 800; color: var(--accent); letter-spacing: 1px; }
     .count { font-size: 12px; color: var(--dim); background: var(--line); padding: 2px 8px; border-radius: 10px; margin-left: 10px; }
     .wrap { max-width: 920px; margin: 0 auto; padding: 20px 16px 60px; }
+    .wrap.wide { max-width: 1240px; }
 
     .toolbar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 20px; align-items: center; }
     .toolbar .search { flex: 1 1 200px; }
@@ -132,6 +133,11 @@
     .ov .sub { display: block; font-size: 11px; color: var(--muted); font-family: monospace; }
     .ov .last { color: #cbd5e1; font-size: 12px; line-height: 1.45; max-width: 300px; }
     .st { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 10px; white-space: nowrap; }
+    .spark { display: block; }
+    .heat { font-family: monospace; white-space: nowrap; font-weight: 600; text-align: right; }
+    .ov th.r { text-align: right; }
+    .sec-name { display: block; font-size: 11px; color: var(--muted); }
+    .bench td { background: var(--panel2); }
     .lightbox { position: fixed; inset: 0; background: rgba(2, 6, 23, .94); display: flex; align-items: center; justify-content: center; z-index: 300; padding: 16px; cursor: zoom-out; }
     .lightbox img { max-width: 100%; max-height: 100%; border-radius: 6px; }
 
@@ -957,6 +963,124 @@ function Positions({ entries, onOpen }) {
   </div>`;
 }
 
+// ─── Sectoren: price action van de Amerikaanse sector-ETF's ──────────────────
+const SECTORS = [
+  { t: "XLK", n: "Technologie" }, { t: "XLC", n: "Communicatie" }, { t: "XLY", n: "Cyclische consumptie" },
+  { t: "XLP", n: "Basisconsumptie" }, { t: "XLE", n: "Energie" }, { t: "XLF", n: "Financiëlen" },
+  { t: "XLV", n: "Gezondheidszorg" }, { t: "XLI", n: "Industrie" }, { t: "XLB", n: "Materialen" },
+  { t: "XLRE", n: "Vastgoed" }, { t: "XLU", n: "Nutsbedrijven" },
+];
+const BENCH = { t: "SPY", n: "S&P 500" };
+const PERIODS = [{ k: "d1", label: "1D", n: 1 }, { k: "w1", label: "1W", n: 5 }, { k: "m1", label: "1M", n: 21 },
+  { k: "m3", label: "3M", n: 63 }, { k: "m6", label: "6M", n: 126 }, { k: "y1", label: "1J", n: 252 }];
+const perfN = (c, n) => c.length > n ? (c[c.length - 1] / c[c.length - 1 - n] - 1) * 100 : null;
+const tvUrl = t => `https://www.tradingview.com/chart/?symbol=AMEX%3A${t}`;
+
+function heatStyle(v, scale) {
+  if (v === null || v === undefined) return { color: "#64748b" };
+  const a = Math.min(Math.abs(v) / scale, 1) * 0.35;
+  return { color: v >= 0 ? "#4ade80" : "#f87171", background: v >= 0 ? `rgba(34,197,94,${a})` : `rgba(239,68,68,${a})` };
+}
+
+function Spark({ closes, n = 63 }) {
+  if (!closes || closes.length < 2) return html`<span className="hint">—</span>`;
+  const W = 120, H = 32, c = closes.slice(-n);
+  const e15 = emaSeries(closes, 15)?.slice(-n), e50 = emaSeries(closes, 50)?.slice(-n);
+  const all = [...c, ...(e50 || []).filter(v => v !== null)];
+  const lo = Math.min(...all), hi = Math.max(...all), span = hi - lo || 1;
+  const pts = arr => arr.map((v, i) => v === null ? null : `${(i / (arr.length - 1) * W).toFixed(1)},${(H - 2 - (v - lo) / span * (H - 4)).toFixed(1)}`).filter(Boolean).join(" ");
+  const up = c[c.length - 1] >= c[0];
+  return html`<svg className="spark" width=${W} height=${H} viewBox=${`0 0 ${W} ${H}`} aria-label="Koers laatste 3 maanden">
+    ${e50 && html`<polyline points=${pts(e50)} fill="none" stroke="#94a3b8" strokeWidth="1" strokeOpacity="0.55" strokeDasharray="2 2" />`}
+    ${e15 && html`<polyline points=${pts(e15)} fill="none" stroke="#fbbf24" strokeWidth="1" strokeOpacity="0.6" />`}
+    <polyline points=${pts(c)} fill="none" stroke=${up ? "#22c55e" : "#ef4444"} strokeWidth="1.6" />
+  </svg>`;
+}
+
+function Sectors({ entries, onOpen }) {
+  const [hist, setHist] = useState({});
+  const [stamp, setStamp] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [sort, setSort] = useState({ key: "m1", dir: -1 });
+
+  async function load(force) {
+    setBusy(true);
+    const list = [BENCH, ...SECTORS];
+    if (force) list.forEach(x => delete histCache["US:" + x.t]);
+    const res = await mapLimit(list, 4, x => fetchHistory({ ticker: x.t, exchange: "US" }));
+    const m = {}; list.forEach((x, i) => { m[x.t] = res[i]; });
+    setHist(m); setStamp(new Date()); setBusy(false);
+  }
+  useEffect(() => { load(false); }, []);
+
+  const build = x => {
+    const h = hist[x.t];
+    const c = h?.status === "ok" ? h.closes : null;
+    const r = { ...x, h, c, live: c ? (h.price ?? c[c.length - 1]) : null, trend: c ? emaTrend(c) : null };
+    PERIODS.forEach(p => { r[p.k] = c ? perfN(c, p.n) : null; });
+    r.hi = c ? (r.live / Math.max(...c.slice(-252)) - 1) * 100 : null;
+    r.inJournal = entries.find(e => (e.exchange || "US") === "US" && e.ticker.trim().toUpperCase() === x.t);
+    return r;
+  };
+  const bench = build(BENCH);
+  const rows = SECTORS.map(build).map(r => ({ ...r, rs: r.m3 !== null && bench.m3 !== null ? r.m3 - bench.m3 : null }));
+  const val = r => sort.key === "ticker" ? r.t : sort.key === "trend" ? (r.trend ? (r.trend.bull ? 1 : 0) : -1) : (r[sort.key] ?? -1e9);
+  rows.sort((a, b) => { const x = sort.key === "ticker" ? a.t : val(a), y = sort.key === "ticker" ? b.t : val(b); return (x < y ? -1 : x > y ? 1 : 0) * sort.dir; });
+  const sortBy = (key, dir) => setSort(s => s.key === key ? { key, dir: -s.dir } : { key, dir });
+  const Th = ({ k, d, r, children }) => html`<th className=${"sort" + (sort.key === k ? " on" : "") + (r ? " r" : "")} onClick=${() => sortBy(k, d)}>
+    ${children}${sort.key === k ? (sort.dir === 1 ? " ▲" : " ▼") : ""}</th>`;
+
+  const ranked = rows.filter(r => r.w1 !== null).sort((a, b) => b.w1 - a.w1);
+  const nBull = rows.filter(r => r.trend?.bull).length, nBear = rows.filter(r => r.trend && !r.trend.bull).length;
+  const oldWorker = [bench, ...rows].some(r => r.h?.status === "oldworker");
+  const scale = { d1: 2, w1: 4, m1: 8, m3: 12, m6: 18, y1: 25 };
+
+  const row = (r, isBench) => html`<tr key=${r.t} className=${isBench ? "bench" : ""}>
+    <td>
+      <a className="ticker" style=${{ minWidth: 0, textDecoration: "none", color: "#f8fafc" }} href=${tvUrl(r.t)} target="_blank" rel="noopener" title="Openen in TradingView">${r.t}</a>
+      ${r.inJournal && html` <button className="btn small" title="Openen in je journal" onClick=${() => onOpen(r.inJournal)}>📓</button>`}
+      <span className="sec-name">${r.n}</span>
+    </td>
+    <td><${Spark} closes=${r.c} /></td>
+    <td className="num">${r.live ? money(r.live, "USD") : r.h ? "—" : "…"}</td>
+    ${PERIODS.map(p => html`<td key=${p.k} className="heat" style=${heatStyle(r[p.k], scale[p.k])}>${r.h ? fmtPct(r[p.k]) : "…"}</td>`)}
+    <td className="heat" style=${isBench ? { color: "#64748b" } : heatStyle(r.rs, 6)}>${isBench ? "—" : r.h ? fmtPct(r.rs) : "…"}</td>
+    <td className="num" style=${{ textAlign: "right", color: r.hi !== null && r.hi > -3 ? "#4ade80" : "#cbd5e1" }}>${r.h ? fmtPct(r.hi) : "…"}</td>
+    <td>${r.trend ? html`<${BiasBadge} label=${r.trend.bull ? "Bullish" : "Bearish"} />` : r.h ? html`<span className="hint">geen data</span>` : "…"}
+      ${r.trend?.bars != null && html`<span className="sub">${r.trend.bars} ${r.trend.bars === 1 ? "dag" : "dagen"}</span>`}</td>
+  </tr>`;
+
+  return html`<div>
+    ${oldWorker && html`<div className="error"><span>⚠️ Je koers-worker geeft nog geen dagkoersen terug. Vervang de code van de worker in Cloudflare door <b>koers-worker.js</b> uit de repo.</span></div>`}
+    <div className="ov-sum">
+      <span><b>11</b> sectoren (SPDR)</span>
+      <span style=${{ color: BIAS_COLOR.Bullish }}>${nBull} bullish</span>
+      <span style=${{ color: BIAS_COLOR.Bearish }}>${nBear} bearish</span>
+      ${ranked.length > 0 && html`<span>Sterkst deze week: <b style=${{ color: "#4ade80" }}>${ranked[0].t}</b> · zwakst: <b style=${{ color: "#f87171" }}>${ranked[ranked.length - 1].t}</b></span>`}
+      <span style=${{ marginLeft: "auto" }}>${busy ? "Dagkoersen laden..." : stamp ? `Data van ${stamp.toLocaleTimeString("nl-BE", { hour: "2-digit", minute: "2-digit" })}` : ""}</span>
+      <button className="btn small" disabled=${busy} onClick=${() => load(true)}>↻ Vernieuw</button>
+    </div>
+    <div className="ov-wrap">
+      <table className="ov" style=${{ minWidth: 980 }}>
+        <thead><tr>
+          <${Th} k="ticker" d=${1}>Sector<//>
+          <th>3 maanden <span style=${{ color: "#fbbf24" }}>— EMA15</span> <span>┄ EMA50</span></th>
+          <th>Koers</th>
+          ${PERIODS.map(p => html`<${Th} key=${p.k} k=${p.k} d=${-1} r=${true}>${p.label}<//>`)}
+          <${Th} k="rs" d=${-1} r=${true}>vs SPY (3M)<//>
+          <${Th} k="hi" d=${-1} r=${true}>van 52W top<//>
+          <${Th} k="trend" d=${-1}>Trend (D)<//>
+        </tr></thead>
+        <tbody>
+          ${row(bench, true)}
+          ${rows.map(r => row(r, false))}
+        </tbody>
+      </table>
+    </div>
+    <p className="hint" style=${{ marginTop: 8 }}>Rendement op basis van slotkoersen (1W = 5, 1M = 21, 3M = 63 handelsdagen). Trend = EMA 15 boven EMA 50 op de daggrafiek. Klik op een ticker om de chart in TradingView te openen.</p>
+  </div>`;
+}
+
 // ─── Main app ─────────────────────────────────────────────────────────────────
 function App() {
   const [entries, setEntries] = useState([]);
@@ -1096,13 +1220,13 @@ function App() {
       </button>
     </div>
 
-    <div className="wrap">
+    <div className=${"wrap" + (view === "sectoren" ? " wide" : "")}>
       ${error && html`<div className="error"><span>⚠️ ${error}</span><button className="btn small ghost" onClick=${() => setError("")}>✕</button></div>`}
       ${showForm && !editEntry && html`<${EntryForm} key="new" defaultTicker=${URL_TICKER} saving=${saving} onSave=${handleSave}
         onCancel=${() => setShowForm(false)} />`}
 
       <div className="toolbar">
-        <input className="inp search" value=${search} onChange=${e => setSearch(e.target.value)} placeholder=${URL_TICKER ? "🔍 Zoek in notities..." : "🔍 Zoek ticker of notitie..."} />
+        ${view !== "sectoren" && html`<input className="inp search" value=${search} onChange=${e => setSearch(e.target.value)} placeholder=${URL_TICKER ? "🔍 Zoek in notities..." : "🔍 Zoek ticker of notitie..."} />
         <select className="inp" value=${filterTf} onChange=${e => setFilterTf(e.target.value)}>
           <option value="All">Alle timeframes</option>
           ${TIMEFRAMES.map(t => html`<option key=${t.id} value=${t.id}>${t.label}</option>`)}
@@ -1118,16 +1242,18 @@ function App() {
         <select className="inp" value=${filterFolder} onChange=${e => setFilterFolder(e.target.value)}>
           ${folderOptions.map(f => html`<option key=${f} value=${f}>${folderIcon(f) + f}</option>`)}
           <option value="Alle">Alle mappen</option>
-        </select>
+        </select>`}
         ${view === "kaarten" && html`<button className="btn" onClick=${() => setGroupByTicker(v => !v)}>${groupByTicker ? "Groep: ticker" : "Groep: datum"}</button>`}
         <div className="seg">
           <button className=${view === "posities" ? "on" : ""} onClick=${() => setView("posities")}>Posities</button>
           <button className=${view === "kaarten" ? "on" : ""} onClick=${() => setView("kaarten")}>Kaarten</button>
           <button className=${view === "overzicht" ? "on" : ""} onClick=${() => setView("overzicht")}>Overzicht</button>
+          <button className=${view === "sectoren" ? "on" : ""} onClick=${() => setView("sectoren")}>Sectoren</button>
         </div>
       </div>
 
-      ${loading ? html`<div className="empty">Verbinden met Firebase...</div>`
+      ${view === "sectoren" ? html`<${Sectors} entries=${entries} onOpen=${e => { setView("kaarten"); setFilterFolder("Alle"); setSearch(e.ticker); }} />`
+        : loading ? html`<div className="empty">Verbinden met Firebase...</div>`
         : filtered.length === 0 ? html`<div className="empty">${entries.length === 0 ? "Nog geen analyses. Klik op + Nieuwe analyse om te beginnen." : "Geen resultaten voor deze filters."}</div>`
         : view === "posities" ? html`<${Positions} entries=${filtered} onOpen=${e => { setView("kaarten"); setSearch(e.ticker); }} />`
         : view === "overzicht" ? html`<${Overview} entries=${filtered} onOpen=${e => { setView("kaarten"); setSearch(e.ticker); }} />`

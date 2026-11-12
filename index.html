@@ -79,6 +79,11 @@
     .tl-kind { font-size: 10px; color: var(--amber); border: 1px solid #f59e0b55; border-radius: 10px; padding: 0 7px; }
     .tl-actions { margin-left: auto; display: flex; gap: 6px; }
     .note { white-space: pre-wrap; color: #cbd5e1; font-size: 13px; line-height: 1.65; }
+    .note b { color: #f8fafc; font-weight: 700; }
+    .note i { color: #e2e8f0; }
+    .fmt-bar { display: flex; align-items: center; gap: 4px; margin-bottom: 4px; }
+    .fmt-btn { background: #1e293b; color: var(--dim); border: 1px solid var(--line2); border-radius: 5px; width: 28px; height: 24px; font-size: 13px; cursor: pointer; }
+    .fmt-btn:hover { color: var(--accent); border-color: var(--accent); }
     .shot { width: 100%; border-radius: 6px; margin-top: 8px; border: 1px solid var(--line); cursor: zoom-in; display: block; }
 
     .actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
@@ -139,7 +144,7 @@
 <body>
 <div id="root"></div>
 <script type="module">
-import React, { useState, useEffect, useRef } from "https://esm.sh/react@18";
+import React, { useState, useEffect, useLayoutEffect, useRef } from "https://esm.sh/react@18";
 import { createRoot } from "https://esm.sh/react-dom@18/client";
 import htm from "https://esm.sh/htm@3";
 const html = htm.bind(React.createElement);
@@ -438,6 +443,70 @@ function useImage(initial) {
   return { imageData, setImageData, takeFile, onPaste };
 }
 
+// ─── Opmaak in notities: **vet** en *cursief* ─────────────────────────────────
+const FMT_BOLD = String.raw`\*\*(?!\s)((?:\*(?!\s)[^*\n]+?(?<!\s)\*|[^*\n])+?)(?<!\s)\*\*`;
+const FMT_ITAL = String.raw`\*(?!\s)((?:\*\*(?!\s)[^*\n]+?(?<!\s)\*\*|[^*\n])+?)(?<!\s)\*`;
+const FMT_RE = new RegExp(`${FMT_BOLD}|${FMT_ITAL}`, "g");
+function renderInline(text, pre = "") {
+  const out = []; let last = 0, i = 0;
+  for (const m of text.matchAll(FMT_RE)) {
+    if (m.index > last) out.push(text.slice(last, m.index));
+    const k = pre + i++;
+    out.push(m[1] !== undefined ? html`<b key=${k}>${renderInline(m[1], k + ".")}</b>` : html`<i key=${k}>${renderInline(m[2], k + ".")}</i>`);
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) out.push(text.slice(last));
+  return out;
+}
+const RichNote = ({ text }) => html`<p className="note">${renderInline(text || "")}</p>`;
+const plainNote = t => { let s = t || "", p; do { p = s; s = s.replace(FMT_RE, (m, b, i) => b ?? i); } while (s !== p); return s; };
+
+// Tekstvak met knoppen B / I (ook Ctrl+B en Ctrl+I)
+function NoteEditor({ value, onChange, placeholder, rows = 3 }) {
+  const ref = useRef();
+  const pendingSel = useRef(null);
+  useLayoutEffect(() => {
+    if (pendingSel.current && ref.current) { const [a, b] = pendingSel.current; pendingSel.current = null; ref.current.focus(); ref.current.setSelectionRange(a, b); }
+  });
+  function wrap(mark) {
+    const ta = ref.current; if (!ta) return;
+    const v = ta.value, s = ta.selectionStart, e = ta.selectionEnd, n = mark.length;
+    const sel = v.slice(s, e);
+    let next, ns, ne;
+    const lead = str => str.match(/^\**/)[0].length, tail = str => str.match(/\**$/)[0].length;
+    const fits = k => k === n || k === 3;                                                      // *x*, **x** of ***x***
+    const before = tail(v.slice(0, s)), after = lead(v.slice(e));
+    if (sel.length > 2 * n && fits(lead(sel)) && fits(tail(sel)) && lead(sel) < sel.length) {
+      next = v.slice(0, s) + sel.slice(n, -n) + v.slice(e); ns = s; ne = e - 2 * n;           // selectie bevat de tekens
+    } else if (before >= n && after >= n && fits(before) && fits(after)) {
+      next = v.slice(0, s - n) + sel + v.slice(e + n); ns = s - n; ne = e - n;                 // tekens rond de selectie
+    } else {
+      // spaties aan de randen buiten de opmaak houden
+      const ls = sel.match(/^\s*/)[0].length, ts = sel.length - sel.trimEnd().length;
+      const core = sel.slice(ls, sel.length - ts);
+      next = v.slice(0, s + ls) + mark + core + mark + v.slice(e - ts);
+      ns = s + ls + n; ne = ns + core.length;
+    }
+    pendingSel.current = [ns, ne];
+    onChange(next);
+  }
+  function onKeyDown(ev) {
+    if (!(ev.ctrlKey || ev.metaKey) || ev.altKey) return;
+    const k = ev.key.toLowerCase();
+    if (k === "b") { ev.preventDefault(); wrap("**"); }
+    if (k === "i") { ev.preventDefault(); wrap("*"); }
+  }
+  return html`<div>
+    <div className="fmt-bar">
+      <button type="button" className="fmt-btn" title="Vet (Ctrl+B)" onMouseDown=${ev => ev.preventDefault()} onClick=${() => wrap("**")}><b>B</b></button>
+      <button type="button" className="fmt-btn" title="Cursief (Ctrl+I)" onMouseDown=${ev => ev.preventDefault()} onClick=${() => wrap("*")}><i style=${{ fontFamily: "Georgia, serif" }}>I</i></button>
+      <span className="hint" style=${{ marginLeft: 6 }}>Selecteer tekst en klik B of I · **vet** · *cursief*</span>
+    </div>
+    <textarea ref=${ref} className="inp" rows=${rows} value=${value} onKeyDown=${onKeyDown}
+      onChange=${e => onChange(e.target.value)} placeholder=${placeholder} />
+  </div>`;
+}
+
 // ─── Update form (nieuw of bewerken) ──────────────────────────────────────────
 function UpdateForm({ initial, defaultTf, onSave, onCancel }) {
   const [note, setNote] = useState(initial?.note || "");
@@ -462,7 +531,7 @@ function UpdateForm({ initial, defaultTf, onSave, onCancel }) {
     </div>
     <div className="field" style=${{ marginBottom: 12 }}>
       <label>Notitie</label>
-      <textarea className="inp" rows="3" value=${note} onChange=${e => setNote(e.target.value)} placeholder="Wat zie je op deze chart?" />
+      <${NoteEditor} value=${note} onChange=${setNote} placeholder="Wat zie je op deze chart?" />
     </div>
     <div style=${{ marginBottom: 12 }}>
       <${ImageDrop} value=${img.imageData} onChange=${img.setImageData} onFile=${img.takeFile} />
@@ -612,7 +681,7 @@ function EntryCard({ entry: e, defaultOpen, editForm, allFolders, onDelete, onEd
               <button className="btn small danger" onClick=${() => onDeleteUpdate(e, it.idx)}>Verwijder</button>
             </span>`}
           </div>
-          ${it.note && html`<p className="note">${it.note}</p>`}
+          ${it.note && html`<${RichNote} text=${it.note} />`}
           ${it.imageData && html`<img className="shot" src=${it.imageData} alt=${`${e.ticker} ${info?.label || ""} chart`} onClick=${() => openImage(it.imageData)} />`}
         </div>`;
       })}
@@ -676,7 +745,7 @@ function EntryForm({ initial, defaultTicker, onSave, onCancel, saving }) {
     </div>
     <div className="field" style=${{ marginBottom: 14 }}>
       <label>Notitie</label>
-      <textarea className="inp" rows="3" value=${form.note} onChange=${e => set("note", e.target.value)} placeholder="Range 453,6–542,16. Shooting star augustus..." />
+      <${NoteEditor} value=${form.note} onChange=${v => set("note", v)} placeholder="Range 453,6–542,16. Shooting star augustus..." />
     </div>
     <div className="field" style=${{ marginBottom: 18 }}>
       <label>Chart screenshot (verplicht)</label>
@@ -768,7 +837,7 @@ function Overview({ entries, onOpen }) {
           ${rows.map(r => {
             const cur = r.e.currency || "USD", qCur = r.q?.currency || cur;
             const st = r.st && STATUS[r.st];
-            const note = (r.last?.note || "").replace(/\s+/g, " ").trim();
+            const note = plainNote(r.last?.note).replace(/\s+/g, " ").trim();
             return html`<tr key=${r.e.id} onClick=${() => onOpen(r.e)} title="Openen in kaartweergave">
               <td>
                 <span className="ticker" style=${{ minWidth: 0, marginRight: 6 }}>${r.e.ticker}</span>
